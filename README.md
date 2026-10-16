@@ -27,8 +27,8 @@ dreamkurumiHT คือ Core Native Hooking Framework และ Modding Engine �
    * ดักจับการอ่าน เขียน หรือรันโค้ดในหน่วยความจำโดยใช้ Debug Registers (DR0 ถึง DR3) ของซีพียู โดยไม่แก้ไขโค้ดเกมใน RAM (Zero-byte Patching)
 4. **CrashGuard Resilience**
    * ระบบ Structured Exception Handling (SEH) ช่วยดักจับข้อผิดพลาดร้ายแรง (เช่น Access Violation 0xC0000005) ภายใน Callbacks หรือ Lua Hooks ป้องกันไม่ให้ตัวเกมหรือเซิร์ฟเวอร์แครชล้มลง
-5. **In-Game Vulkan IMGUI Overlay & Console (F9)**
-   * เมนูคอนโซลในเกมสำหรับตรวจสอบหน่วยความจำ สแกน Signature และพิมพ์คำสั่งดีบักได้แบบเรียลไทม์
+5. **Vulkan Presentation Interceptor & Hotkey Console (F9)**
+   * ระบบดักจับเฟรม Vulkan (vkQueuePresentKHR) พร้อมตัวจัดการปุ่มลัด (F9 Menu, F10 Console) และระบบ Interactive REPL Console สำหรับพิมพ์คำสั่งดีบักแบบเรียลไทม์
 6. **Embedded LuaJIT 2.1 Engine**
    * รองรับการเขียนม็อดด้วยภาษา Lua เพียงวางไฟล์ไว้ในโฟลเดอร์ `mods/scripts/` พร้อมระบบ Hot-Reload แก้โค้ดแล้วทำงานใหม่ทันทีโดยไม่ต้องรีสตาร์ตเกม
 7. **Universal C-ABI Dynamic Linking**
@@ -116,8 +116,8 @@ The core engine is self-contained. Mod developers can study the provided documen
    * Intercept memory read, write, and execute operations via hardware debug registers (DR0 through DR3) with zero RAM patching.
 4. **CrashGuard Resilience**
    * Structured Exception Handling (SEH) isolates Access Violations (0xC0000005) inside callbacks and Lua hooks, keeping the game client and dedicated server stable.
-5. **In-Game Vulkan IMGUI Overlay & Console (F9)**
-   * Interactive in-game overlay for live memory inspection, AOB scanning, and REPL diagnostics.
+5. **Vulkan Presentation Interceptor & Hotkey Console (F9)**
+   * Intercepts Vulkan presentation frames (vkQueuePresentKHR) with built-in hotkey polling (F9 Menu, F10 Console) and an interactive REPL console for runtime diagnostics.
 6. **Embedded LuaJIT 2.1 Engine**
    * Create lightweight mods in Lua with automatic hot-reloading from `mods/scripts/`.
 7. **Universal C-ABI Dynamic Linking**
