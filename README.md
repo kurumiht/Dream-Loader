@@ -1,6 +1,6 @@
 # dreamkurumiHT
 
-Next-Generation Native Harmony C++20 Hooking Framework & Mod Engine for Enshrouded 1.0+
+Native Harmony C++20 Hooking Framework & Mod Engine for Enshrouded 1.0+
 
 [ภาษาไทย](#ภาษาไทย) | [English](#english)
 
