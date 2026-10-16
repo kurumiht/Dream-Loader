@@ -1,6 +1,6 @@
 # dreamkurumiHT
 
-Native Harmony C++20 Hooking Framework & Mod Engine for Enshrouded 1.0+
+Native Harmony C++20 Hooking Framework & Mod Engine for Enshrouded 1.0
 
 [ภาษาไทย](#ภาษาไทย) | [English](#english)
 
@@ -9,88 +9,87 @@ Native Harmony C++20 Hooking Framework & Mod Engine for Enshrouded 1.0+
 ## ภาษาไทย
 
 ### ภาพรวมของโปรเจกต์
-dreamkurumiHT คือ Core Native Hooking Framework และ Modding Engine สำหรับเกม Enshrouded (เวอร์ชัน 1.0) ทำหน้าที่เป็นแพลตฟอร์มตัวกลางในการขับเคลื่อนม็อด เช่นเดียวกับ BepInEx ในเกมเอนจิน Unity หรือ SKSE ใน Skyrim
+dreamkurumiHT คือ Hooking Framework และ Modding Engine สำหรับเกม Enshrouded (เวอร์ชัน 1.0) ทำหน้าที่เป็นตัวโหลดและแพลตฟอร์มตัวกลางในการขับเคลื่อนม็อด เช่นเดียวกับ BepInEx ใน Unity หรือ SKSE ใน Skyrim
 
-จุดประสงค์ของ Engine นี้คือการเป็นแกนกลางที่สมบูรณ์ในตัวเอง นักพัฒนาสามารถศึกษาคู่มือแล้วสร้างม็อดของตัวเองในรูปแบบ Dynamic Plugins (C++) หรือสคริปต์ Lua มาเชื่อมต่อเข้ากับ Engine ได้ทันที โดยไม่มีความจำเป็นต้องแก้ไขหรือคอมไพล์ตัว dreamkurumiHT ใหม่
+ตัวโปรแกรมประกอบด้วย:
+1. `dinput8.dll` : ตัวโหลดม็อด (Universal Mod Loader) ทำหน้าที่โหลดระบบม็อดเข้าตัวเกมอัตโนมัติเมื่อเปิดเกม
+2. `mods/dreamkurumiHT/` : ตัวเอนจินหลัก (Core Engine) ควบคุมการ Hook และจัดการสคริปต์ต่างๆ
 
----
-
-### จุดเด่นและฟีเจอร์หลัก
-
-1. **Dynamic MidHook (Zero Assembly)**
-   * ดักจับและแทรกการทำงานที่ระดับคำสั่ง CPU ใดๆ ในเกมได้โดยตรง
-   * อ่านและเขียนค่ารีจิสเตอร์ CPU ได้ครบถ้วน ทั้ง General Purpose (RAX ถึง R15) และ Vector Registers (XMM0 ถึง XMM15) โดยไม่ต้องเขียนโค้ด Assembly
-2. **Declarative Harmony Hooking**
-   * ควบคุมการทำงานของฟังก์ชันในเกมได้อย่างอิสระ ทั้งแบบรันก่อน (Prefix), รันหลัง (Postfix) หรือสั่งข้ามฟังก์ชันเดิมของเกม (SkipOriginal)
-   * มาพร้อมระบบถอดรหัสความยาวคำสั่ง CPU (HDE64 Disassembler) ในตัว ป้องกันปัญหา Opcode ฉีกขาด
-3. **Hardware Breakpoints (VEH Engine)**
-   * ดักจับการอ่าน เขียน หรือรันโค้ดในหน่วยความจำโดยใช้ Debug Registers (DR0 ถึง DR3) ของซีพียู โดยไม่แก้ไขโค้ดเกมใน RAM (Zero-byte Patching)
-4. **CrashGuard Resilience**
-   * ระบบ Structured Exception Handling (SEH) ช่วยดักจับข้อผิดพลาดร้ายแรง (เช่น Access Violation 0xC0000005) ภายใน Callbacks หรือ Lua Hooks ป้องกันไม่ให้ตัวเกมหรือเซิร์ฟเวอร์แครชล้มลง
-5. **Vulkan Presentation Interceptor & Hotkey Console (F9)**
-   * ระบบดักจับเฟรม Vulkan (vkQueuePresentKHR) พร้อมตัวจัดการปุ่มลัด (F9 Menu, F10 Console) และระบบ Interactive REPL Console สำหรับพิมพ์คำสั่งดีบักแบบเรียลไทม์
-6. **Embedded LuaJIT 2.1 Engine**
-   * รองรับการเขียนม็อดด้วยภาษา Lua เพียงวางไฟล์ไว้ในโฟลเดอร์ `mods/scripts/` พร้อมระบบ Hot-Reload แก้โค้ดแล้วทำงานใหม่ทันทีโดยไม่ต้องรีสตาร์ตเกม
-7. **Universal C-ABI Dynamic Linking**
-   * รองรับการสร้างปลั๊กอินด้วยภาษา C++, C#, Rust, Python หรือ Zig ผ่านส่วนหัว `dreamkurumiHT_plugin.h`
+ผู้เล่นทั่วไปสามารถนำไปติดตั้งเพื่อใช้งานม็อดต่างๆ ได้ทันที ส่วนนักพัฒนาสามารถสร้างม็อดของตัวเองในรูปแบบปลั๊กอิน C++ หรือสคริปต์ Lua มาเชื่อมต่อได้โดยตรง
 
 ---
 
-### กฎสถาปัตยกรรม (Architectural Principle)
+### โครงสร้างไฟล์สำหรับผู้ใช้งานทั่วไป
 
-* **Mod is Mod, Dream is Harmony Engine:** ตัว dreamkurumiHT ทำหน้าที่เป็นโครงสร้างพื้นฐานสำหรับ Hook และจัดการระบบความปลอดภัยเท่านั้น จะไม่มีตรรกะหรือโค้ดเฉพาะเจาะจงของม็อดเกมรวมอยู่ภายใน Engine
-* ม็อดทั้งหมดต้องแยกอยู่อย่างเป็นอิสระและเชื่อมต่อเข้ามาผ่าน C-ABI Interface
-
----
-
-### วิธีสร้างม็อดสำหรับนักพัฒนา
-
-#### วิธีที่ 1: สร้างม็อด C++ (Native Plugin)
-ใช้สคริปต์สร้างโครงสร้างม็อดอัตโนมัติ:
-```cmd
-create_mod.bat "My-Mod-Name"
+```text
+โฟลเดอร์เกม Enshrouded/
+├── enshrouded.exe
+├── dinput8.dll                 <-- วางไว้ข้างไฟล์เกม enshrouded.exe
+└── mods/                       <-- โฟลเดอร์ม็อด
+    ├── dreamkurumiHT/          <-- โฟลเดอร์หลักของ dreamkurumiHT
+    │   ├── dreamkurumiHT.dll
+    │   ├── lua51.dll
+    │   ├── config.toml
+    │   ├── native-plugin.ini
+    │   ├── mod.json
+    │   └── modinfo.json
+    └── scripts/                <-- โฟลเดอร์สำหรับใส่ม็อด Lua
+        └── example_mod.lua
 ```
-ระบบจะสร้างโฟลเดอร์และไฟล์ที่จำเป็นให้ทันที:
-* `mods/My-Mod-Name/src/dllmain.cpp` : ไฟล์เขียนโค้ดม็อด
-* `mods/My-Mod-Name/native-plugin.ini` : คอนฟิกการโหลดม็อด
-* `mods/My-Mod-Name/config.toml` : ไฟล์ตั้งค่าของม็อด
-* `mods/My-Mod-Name/build.bat` : สคริปต์คอมไพล์ม็อด
 
-#### วิธีที่ 2: สร้างม็อดด้วยสคริปต์ Lua
-สร้างไฟล์สคริปต์ `.lua` ในโฟลเดอร์ `mods/scripts/` เช่น:
+---
+
+### วิธีติดตั้งใช้งานแบบง่าย (สำหรับผู้เล่นทั่วไป)
+
+1. ดาวน์โหลดไฟล์ `dreamkurumiHT-v1.0.0.zip` จากหน้า Releases
+2. แตกไฟล์ ZIP
+3. ก๊อปปี้ 2 อย่างนี้ไปวางในโฟลเดอร์เกม Enshrouded (โฟลเดอร์เดียวกับที่มี `enshrouded.exe`):
+   * ไฟล์ `dinput8.dll`
+   * โฟลเดอร์ `mods/`
+4. เปิดเล่นเกมตามปกติ ตัวเอนจินจะเริ่มทำงานอัตโนมัติ
+
+> หมายเหตุสำหรับ Dedicated Server:
+> สามารถนำ `dinput8.dll` และโฟลเดอร์ `mods/` ไปวางที่โฟลเดอร์หลักของ `EnshroudedServer` ได้เช่นเดียวกัน
+
+---
+
+### วิธีสร้างม็อด (สำหรับนักพัฒนา)
+
+#### 1. สร้างม็อด C++ (Native Plugin)
+ดับเบิ้ลคลิกไฟล์ `create_mod.bat` หรือรันคำสั่ง:
+```cmd
+create_mod.bat "ชื่อม็อดของคุณ"
+```
+ระบบจะสร้างโครงสร้างโปรเจกต์ม็อดให้ทันที:
+* `mods/ชื่อม็อด/src/dllmain.cpp` : โค้ดม็อด (เชื่อมต่อผ่าน `include/dreamkurumiHT/dreamkurumiHT_plugin.h`)
+* `mods/ชื่อม็อด/native-plugin.ini` : คอนฟิกการโหลดม็อด
+* `mods/ชื่อม็อด/config.toml` : การตั้งค่าของม็อด
+* `mods/ชื่อม็อด/build.bat` : สคริปต์คอมไพล์ม็อดเป็นไฟล์ `.dll`
+
+#### 2. สร้างม็อดด้วย Lua (สคริปต์ง่ายๆ ไม่ต้องคอมไพล์)
+สร้างไฟล์ `.lua` แล้วนำไปวางไว้ในโฟลเดอร์ `mods/scripts/` เช่น `mods/scripts/my_mod.lua`:
 ```lua
--- ตัวอย่าง: ดักจับและพิมพ์ข้อความแจ้งเตือนทุก 5 วินาที
 dream.set_interval(function()
     dream.log("Hello from Lua Mod!")
 end, 5000)
 ```
-เมื่อเปิดเกม ตัว Engine จะตรวจพบและรันสคริปต์ให้อัตโนมัติ
+เมื่อเซฟไฟล์ ตัวเอนจินจะโหลดและทำงานใหม่ให้อัตโนมัติ (Hot-Reload) โดยไม่ต้องปิดเกม
 
 ---
 
-### วิธีคอมไพล์ Engine จาก Source Code
+### ฟีเจอร์ของเอนจิน
 
-#### ข้อกำหนดของระบบ:
-* คอมไพเลอร์ GCC ที่รองรับ C++20 (เช่น w64devkit หรือ MSYS2 MinGW-w64)
-* Windows 10/11 64-bit
-
-#### ขั้นตอนการคอมไพล์:
-รันสคริปต์บิลด์ที่โฟลเดอร์หลัก:
-```cmd
-build.bat
-```
-สคริปต์จะตรวจหาคอมไพเลอร์ในระบบและคอมไพล์ `dreamkurumiHT.dll` ออกมาให้ทันที
-
----
-
-### เอกสารทางเทคนิคเพิ่มเติม
-* **คู่มือนักพัฒนา (Developer Guide):** ศึกษาโครงสร้าง C-ABI และตัวอย่างการใช้งาน API ที่ [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)
-* **คัมภีร์เจาะลึกโครงสร้างเกม 1.0 (Engine Internals Bible):** ศึกษา Structs, Signatures และ RVAs ได้ที่ [ENSHROUDED_1.0_ENGINE_INTERNALS_BIBLE.md](ENSHROUDED_1.0_ENGINE_INTERNALS_BIBLE.md)
+1. **Dynamic MidHook**: ดักจับและอ่าน/เขียนค่ารีจิสเตอร์ CPU (RAX-R15, XMM0-XMM15) ที่คำสั่งใดๆ ในเกมได้โดยตรง ไม่ต้องเขียน Assembly
+2. **Declarative Harmony Hooking**: รองรับ Prefix, Postfix และ SkipOriginal พร้อมตัววิเคราะห์ความยาวคำสั่ง HDE64 ในตัว
+3. **Hardware Breakpoints (VEH Engine)**: ดักจับการเข้าถึงหน่วยความจำผ่าน DR0-DR3 โดยไม่ต้องแก้ไขโค้ดเกมใน RAM
+4. **CrashGuard**: ป้องกันเกมแครชจาก Access Violation (0xC0000005) ในฟังก์ชัน Hook หรือ Lua
+5. **Vulkan Present Interceptor**: ดักจับเฟรม Vulkan (vkQueuePresentKHR) พร้อมปุ่มลัด F9 (Menu) / F10 (Console) สำหรับดีบัก
+6. **Embedded LuaJIT 2.1**: รองรับการเขียนสคริปต์ Lua พร้อมระบบตรวจจับและรีโหลดอัตโนมัติ
 
 ---
 
 ### สัญญาอนุญาต
-โปรเจกต์นี้เผยแพร่ภายใต้สัญญาอนุญาต [MIT License](LICENSE) ลิขสิทธิ์ (c) 2026 kurumiht
+เผยแพร่ภายใต้สัญญาอนุญาต [MIT License](LICENSE) ลิขสิทธิ์ (c) 2026 kurumiht
 
 ---
 ---
@@ -98,83 +97,82 @@ build.bat
 ## English
 
 ### Project Overview
-dreamkurumiHT is a native hooking framework and modding platform engineered specifically for Enshrouded (Release 1.0). It acts as an extensible mod runtime, similar to BepInEx in Unity or SKSE in Skyrim.
+dreamkurumiHT is a native Harmony C++20 hooking framework and modding platform for Enshrouded (Version 1.0). It acts as a modular mod loader and runtime, similar to BepInEx for Unity or SKSE for Skyrim.
 
-The core engine is self-contained. Mod developers can study the provided documentation and create independent plugins (in C++) or Lua scripts without needing to modify, recompile, or interfere with dreamkurumiHT itself.
+The distribution consists of:
+1. `dinput8.dll` : The Universal Mod Loader proxy that automatically boots the mod system when the game launches.
+2. `mods/dreamkurumiHT/` : The core native engine handling memory hooking, logging, and script execution.
 
----
-
-### Key Engine Features
-
-1. **Dynamic MidHook (Zero Assembly)**
-   * Hook arbitrary CPU instructions with complete runtime control.
-   * Read and modify general-purpose registers (RAX through R15) and vector registers (XMM0 through XMM15) with zero standalone assembly files.
-2. **Declarative Harmony Hooking**
-   * Prefix, Postfix, and SkipOriginal execution flow control.
-   * Integrated HDE64 instruction length disassembler prevents opcode boundary truncation.
-3. **Hardware Breakpoints (VEH Engine)**
-   * Intercept memory read, write, and execute operations via hardware debug registers (DR0 through DR3) with zero RAM patching.
-4. **CrashGuard Resilience**
-   * Structured Exception Handling (SEH) isolates Access Violations (0xC0000005) inside callbacks and Lua hooks, keeping the game client and dedicated server stable.
-5. **Vulkan Presentation Interceptor & Hotkey Console (F9)**
-   * Intercepts Vulkan presentation frames (vkQueuePresentKHR) with built-in hotkey polling (F9 Menu, F10 Console) and an interactive REPL console for runtime diagnostics.
-6. **Embedded LuaJIT 2.1 Engine**
-   * Create lightweight mods in Lua with automatic hot-reloading from `mods/scripts/`.
-7. **Universal C-ABI Dynamic Linking**
-   * Build plugins in C++, C#, Rust, Python, or Zig using the header `dreamkurumiHT_plugin.h`.
+Players can drop it into the game folder to run mods immediately. Developers can create plugins in C++ or scripts in Lua without needing to modify dreamkurumiHT itself.
 
 ---
 
-### Architectural Principle
+### File Structure for Players
 
-* **Mod is Mod, Dream is Harmony Engine:** dreamkurumiHT serves exclusively as a native hooking framework and runtime safety layer. No game-specific mod logic is embedded in the engine core.
-* All plugins remain completely modular and communicate via the stable C-ABI interface.
+```text
+Enshrouded Game Directory/
+├── enshrouded.exe
+├── dinput8.dll                 <-- Place next to enshrouded.exe
+└── mods/                       <-- Mod directory
+    ├── dreamkurumiHT/          <-- Core engine directory
+    │   ├── dreamkurumiHT.dll
+    │   ├── lua51.dll
+    │   ├── config.toml
+    │   ├── native-plugin.ini
+    │   ├── mod.json
+    │   └── modinfo.json
+    └── scripts/                <-- Lua scripts directory
+        └── example_mod.lua
+```
 
 ---
 
-### Creating Mods (Developer Quickstart)
+### Easy Installation Guide (For Players)
 
-#### Method 1: C++ Native Plugin
-Generate a complete mod scaffold using the included batch tool:
+1. Download `dreamkurumiHT-v1.0.0.zip` from the Releases tab.
+2. Extract the ZIP archive.
+3. Copy these two items into your Enshrouded game folder (the directory containing `enshrouded.exe`):
+   * `dinput8.dll`
+   * `mods/` folder
+4. Start the game normally. The engine will initialize automatically.
+
+> Note for Dedicated Servers:
+> Place `dinput8.dll` and the `mods/` directory into your `EnshroudedServer` root folder using the same steps.
+
+---
+
+### Creating Mods (For Developers)
+
+#### 1. C++ Native Plugin
+Run the project scaffolding script:
 ```cmd
-create_mod.bat "My-Mod-Name"
+create_mod.bat "YourModName"
 ```
 Generated structure:
-* `mods/My-Mod-Name/src/dllmain.cpp` : Plugin source code
-* `mods/My-Mod-Name/native-plugin.ini` : Plugin loader configuration
-* `mods/My-Mod-Name/config.toml` : Live runtime settings
-* `mods/My-Mod-Name/build.bat` : Standalone build script
+* `mods/YourModName/src/dllmain.cpp` : Mod source code (links via `include/dreamkurumiHT/dreamkurumiHT_plugin.h`)
+* `mods/YourModName/native-plugin.ini` : Mod loader configuration
+* `mods/YourModName/config.toml` : Runtime mod settings
+* `mods/YourModName/build.bat` : Compiles your mod into `.dll`
 
-#### Method 2: Lua Scripting
-Place `.lua` files in `mods/scripts/`:
+#### 2. Lua Script Modding
+Drop `.lua` files into `mods/scripts/`, for example `mods/scripts/my_mod.lua`:
 ```lua
--- Example: recurring timer callback
 dream.set_interval(function()
     dream.log("Hello from Lua Mod!")
 end, 5000)
 ```
-The engine automatically loads and hot-reloads scripts on save.
+Scripts are loaded automatically and support live hot-reloading on save.
 
 ---
 
-### Building the Engine from Source
+### Engine Features
 
-#### Prerequisites:
-* GCC compiler with C++20 support (e.g., w64devkit or MSYS2 MinGW-w64).
-* Windows 10/11 64-bit.
-
-#### Build Command:
-Execute the root build script:
-```cmd
-build.bat
-```
-The script locates your compiler and builds `dreamkurumiHT.dll`.
-
----
-
-### Technical References
-* **Developer Guide:** Architecture deep-dive, ABI specifications, and API examples in [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).
-* **Engine Internals Bible:** Verified signatures, RVAs, and struct definitions in [ENSHROUDED_1.0_ENGINE_INTERNALS_BIBLE.md](ENSHROUDED_1.0_ENGINE_INTERNALS_BIBLE.md).
+1. **Dynamic MidHook**: Read and modify CPU registers (RAX-R15, XMM0-XMM15) at any instruction without writing assembly.
+2. **Declarative Harmony Hooking**: Prefix, Postfix, and SkipOriginal execution flow with integrated HDE64 length disassembler.
+3. **Hardware Breakpoints (VEH Engine)**: Monitor memory access using DR0-DR3 without modifying game code in RAM.
+4. **CrashGuard**: Catches Access Violations (0xC0000005) inside hooks and scripts to prevent game crashes.
+5. **Vulkan Present Interceptor**: Intercepts Vulkan frames (vkQueuePresentKHR) with F9 Menu / F10 Console hotkeys.
+6. **Embedded LuaJIT 2.1**: Scripting engine with automatic script detection and hot-reloading.
 
 ---
 
