@@ -9,8 +9,8 @@
   <b>สลับภาษา / Language Switcher:</b><br>
   <a href="README.md">🇬🇧 <b>English</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht8947/Dream-Core/releases/download/v3.4.0/Dream-AoE-Harvest-v3.4.0.zip">
-    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94%E0%B8%A1%E0%B9%87%E0%B8%AD%E0%B8%94-Dream--AoE--Harvest%20v3.4.0%20(Plug%20%26%20Play)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลดม็อดพร้อมเล่น" />
+  <a href="https://github.com/kurumiht8947/Dream-Core/releases/download/v3.4.0/Dream-Core-v3.4.0.zip">
+    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.4.0%20(Plug%20%26%20Play)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.4.0" />
   </a>
 </p>
 
