@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Default: .NET 8 (LTS) หรือสามารถเปลี่ยนเป็น net10.0 ได้ทันที -->
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OutputType>Library</OutputType>
+    
+    <!-- Native AOT Compilation: คอมไพล์ C# ออกมาเป็น Native DLL x64 แท้ๆ ไม่ต้องลง .NET Runtime ในเครื่องผู้เล่น -->
+    <PublishAot>true</PublishAot>
+    <StripSymbols>true</StripSymbols>
+    <OptimizationPreference>Speed</OptimizationPreference>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\bindings\csharp\DreamKurumi.cs" Link="DreamKurumi.cs" />
+  </ItemGroup>
+
+</Project>

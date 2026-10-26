@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 
+  dreamkurumiHT Optional Mod Manifest
+  NOTE: ไฟล์นี้เป็น OPTIONAL (มีหรือไม่ก็ได้)
+  - ถ้าไม่มี: ตัวเกมและ Mod Loader (XHL/EML) ยังโหลด MyDreamMod.dll ทำงานได้ตามปกติ 100%
+  - ถ้ามี: dreamkurumiHT และ Vortex/Mod Manager จะอ่านค่า Name, Version, Author อัตโนมัติ
+-->
+<xml>
+	<Name value="SlideMovementHT" />
+	<DisplayName value="Slide Movement HT (Directional Slide &amp; Parkour)" />
+	<Version value="3.3.0.0" />
+	<Description value="Directional combat sliding, slide-canceling, slide-jumping, and omni-sprinting mechanics." />
+	<Author value="kurumiHT" />
+	<Website value="" />
+</xml>

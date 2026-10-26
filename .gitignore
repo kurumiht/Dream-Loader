@@ -1,0 +1,26 @@
+# Logs, Dumps & Crash Reports
+*.log
+*.log.*
+*.txt
+*.dmp
+dream_crash_report_*
+dream_hang_report_*
+*.cache.ini
+*.ini
+
+# Build Artifacts & Intermediate Files
+*.o
+*.obj
+*.exe
+bin/
+obj/
+build/
+x64/
+Debug/
+Release/
+
+# Temporary & Editor files
+*.tmp
+*.bak
+.vs/
+.vscode/
