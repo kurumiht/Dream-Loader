@@ -222,3 +222,15 @@
 ```
 
 **ALL 41 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!**
+
+---
+
+## แท็กและคำค้นหา (Topics & Tags)
+
+`#enshrouded` `#enshrouded-mods` `#aoe-harvest` `#dream-core` `#dreamkurumiht` `#harmony` `#modloader` `#game-modding` `#cpp20` `#reverse-engineering` `#dedicated-server` `#farming-mod`
+
+---
+
+## สิทธิ์การใช้งาน (License)
+
+โปรเจกต์นี้เผยแพร่ภายใต้สัญญาอนุญาตแบบ **MIT License** เปิดให้ใช้งาน ดัดแปลง และพัฒนาต่อได้อย่างอิสระ

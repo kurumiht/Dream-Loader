@@ -278,6 +278,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved) {
 
 ---
 
+## Topics & Tags
+
+`#enshrouded` `#enshrouded-mods` `#aoe-harvest` `#dream-core` `#dreamkurumiht` `#harmony` `#modloader` `#game-modding` `#cpp20` `#reverse-engineering` `#dedicated-server` `#farming-mod`
+
+---
+
 ## License
 
 This project is released under the **MIT License**.
