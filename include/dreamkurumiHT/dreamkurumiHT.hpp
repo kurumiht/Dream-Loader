@@ -58,4 +58,5 @@
 #include "DreamPlayerRegistry.hpp"
 #include "DreamBackup.hpp"
 #include "DreamLiveConfig.hpp"
+#include "DreamToast.hpp"
 #include "EnshroudedSDK.hpp"

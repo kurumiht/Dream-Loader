@@ -17,6 +17,7 @@ struct PatchMetadata {
     static constexpr const char* TargetSymbol = nullptr;
     static constexpr uintptr_t TargetFallbackRva = 0;
     static constexpr const char* TargetPattern = nullptr;
+    static constexpr const char* TargetSecondaryPattern = nullptr;
 };
 
 // ============================================================================
@@ -29,10 +30,12 @@ public:
     virtual bool InstallPatch() = 0;
     virtual bool DisablePatch() = 0;
     virtual bool IsInstalled() const = 0;
+    virtual void* GetTargetAddress() const = 0;
+    virtual const char* GetResolutionMethod() const = 0;
 };
 
 // ============================================================================
-// Central Harmony Registry (Manages PatchAll & UnpatchAll)
+// Central Harmony Registry (Manages PatchAll, UnpatchAll & Health Table)
 // ============================================================================
 class DreamHarmonyRegistry {
 public:
@@ -50,14 +53,36 @@ public:
         DREAM_LOG_INFO("DreamHarmony: Executing PatchAll (%zu registered patches)...", m_patches.size());
         for (auto* p : m_patches) {
             if (p->InstallPatch()) {
-                DREAM_LOG_INFO("  [OK] Installed patch: %s", p->GetName());
+                DREAM_LOG_INFO("  [OK] Installed patch: %s (%s at %p)", p->GetName(), p->GetResolutionMethod(), p->GetTargetAddress());
                 count++;
             } else {
-                DREAM_LOG_WARN("  [FAIL] Could not install patch: %s", p->GetName());
+                DREAM_LOG_WARN("  [FAIL] Could not install patch: %s (%s)", p->GetName(), p->GetResolutionMethod());
             }
         }
         DREAM_LOG_INFO("DreamHarmony: PatchAll complete (%zu/%zu succeeded)", count, m_patches.size());
+
+        PrintHookHealthTable();
         return count;
+    }
+
+    void PrintHookHealthTable() {
+        DREAM_LOG_INFO("\n+---------------------------------------------------------------------------------------------------------+");
+        DREAM_LOG_INFO("|                                 DreamHarmony Hook Health Diagnostics Table                              |");
+        DREAM_LOG_INFO("+----------------------------+--------------------+-------------------------+-----------------------------+");
+        DREAM_LOG_INFO("| Patch / Hook Name          | Target Address     | Resolution Method       | Health Status               |");
+        DREAM_LOG_INFO("+----------------------------+--------------------+-------------------------+-----------------------------+");
+        for (auto* p : m_patches) {
+            char addrStr[32];
+            if (p->GetTargetAddress()) {
+                snprintf(addrStr, sizeof(addrStr), "0x%016llX", (unsigned long long)(uintptr_t)p->GetTargetAddress());
+            } else {
+                snprintf(addrStr, sizeof(addrStr), "(Unresolved)");
+            }
+            const char* statusStr = p->IsInstalled() ? "[HEALTHY / ACTIVE]" : "[FAILED]";
+            DREAM_LOG_INFO("| %-26s | %-18s | %-23s | %-27s |",
+                           p->GetName(), addrStr, p->GetResolutionMethod(), statusStr);
+        }
+        DREAM_LOG_INFO("+----------------------------+--------------------+-------------------------+-----------------------------+\n");
     }
 
     void UnpatchAll() {
@@ -182,6 +207,9 @@ public:
     // Auto-registration mechanism for PatchAll
     class AutoRegister : public IPatchRegistration {
     public:
+        void* m_resolvedAddress{nullptr};
+        const char* m_resolutionMethod{"Unresolved"};
+
         AutoRegister() {
             DreamHarmonyRegistry::Instance().Register(this);
         }
@@ -193,16 +221,53 @@ public:
             return "UnnamedPatch";
         }
 
+        void* GetTargetAddress() const override {
+            return m_resolvedAddress;
+        }
+
+        const char* GetResolutionMethod() const override {
+            return m_resolutionMethod;
+        }
+
         bool InstallPatch() override {
             if constexpr (PatchMetadata<Derived>::TargetSymbol != nullptr) {
                 uintptr_t fallback = PatchMetadata<Derived>::TargetFallbackRva;
-                const char* pattern = PatchMetadata<Derived>::TargetPattern;
+                const char* primaryPattern = PatchMetadata<Derived>::TargetPattern;
+                const char* secondaryPattern = PatchMetadata<Derived>::TargetSecondaryPattern;
 
-                if (pattern) {
-                    void* addr = DreamCache::Instance().ResolvePattern(PatchMetadata<Derived>::TargetSymbol, pattern, fallback);
+                void* addr = nullptr;
+
+                // 1. If pattern is specified: Try Primary AOB Pattern
+                if (primaryPattern) {
+                    addr = DreamCache::Instance().ResolvePattern(PatchMetadata<Derived>::TargetSymbol, primaryPattern, 0);
+                    if (addr) {
+                        m_resolutionMethod = "Primary AOB";
+                    }
+                }
+
+                // 2. Try Secondary Fallback AOB Pattern if primary failed
+                if (!addr && secondaryPattern) {
+                    std::string secSymbol = std::string(PatchMetadata<Derived>::TargetSymbol) + "_Sec";
+                    addr = DreamCache::Instance().ResolvePattern(secSymbol, secondaryPattern, 0);
+                    if (addr) {
+                        m_resolutionMethod = "Secondary AOB (Fallback)";
+                        DREAM_LOG_WARN("DreamHarmony: Patch '%s' resolved via Secondary Fallback AOB pattern!", PatchMetadata<Derived>::TargetSymbol);
+                    }
+                }
+
+                // 3. Try Symbol Cache or Fallback Direct RVA
+                if (!addr) {
+                    addr = DreamCache::Instance().Resolve(PatchMetadata<Derived>::TargetSymbol, fallback);
+                    if (addr) {
+                        m_resolutionMethod = (primaryPattern || secondaryPattern) ? "Fallback Direct RVA" : "Symbol Cache / RVA";
+                    }
+                }
+
+                if (addr) {
+                    m_resolvedAddress = addr;
                     return Install(addr);
                 } else {
-                    return InstallSymbol(PatchMetadata<Derived>::TargetSymbol, fallback);
+                    m_resolutionMethod = "Resolution FAILED";
                 }
             }
             return false;
@@ -242,6 +307,7 @@ class DreamPatch<Derived, Ret(Args...)> : public DreamPatchBase<Derived, Ret, Ar
             static constexpr const char* TargetSymbol = SymbolNameStr; \
             static constexpr uintptr_t TargetFallbackRva = FallbackRvaVal; \
             static constexpr const char* TargetPattern = nullptr; \
+            static constexpr const char* TargetSecondaryPattern = nullptr; \
         }; \
     } \
     struct PatchClass : public ::dreamkurumi::DreamPatch<PatchClass, RetType(__VA_ARGS__)>
@@ -254,6 +320,20 @@ class DreamPatch<Derived, Ret(Args...)> : public DreamPatchBase<Derived, Ret, Ar
             static constexpr const char* TargetSymbol = SymbolNameStr; \
             static constexpr uintptr_t TargetFallbackRva = FallbackRvaVal; \
             static constexpr const char* TargetPattern = PatternStr; \
+            static constexpr const char* TargetSecondaryPattern = nullptr; \
+        }; \
+    } \
+    struct PatchClass : public ::dreamkurumi::DreamPatch<PatchClass, RetType(__VA_ARGS__)>
+
+// Macro for Harmony-style patch with Primary AND Secondary Fallback AOB (Extreme Resiliency)
+#define DREAM_HARMONY_AOB_RESILIENT(PatchClass, SymbolNameStr, PrimaryPatternStr, SecondaryPatternStr, FallbackRvaVal, RetType, ...) \
+    struct PatchClass; \
+    namespace dreamkurumi { \
+        template <> struct PatchMetadata<PatchClass> { \
+            static constexpr const char* TargetSymbol = SymbolNameStr; \
+            static constexpr uintptr_t TargetFallbackRva = FallbackRvaVal; \
+            static constexpr const char* TargetPattern = PrimaryPatternStr; \
+            static constexpr const char* TargetSecondaryPattern = SecondaryPatternStr; \
         }; \
     } \
     struct PatchClass : public ::dreamkurumi::DreamPatch<PatchClass, RetType(__VA_ARGS__)>

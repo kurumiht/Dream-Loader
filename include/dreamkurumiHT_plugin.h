@@ -37,7 +37,8 @@ typedef void* (*FnDK_GetEntity)(void* pContext, uint32_t entityId);
 typedef void* (*FnDK_GetEntityComponent)(void* pEntity, uint16_t compId);
 typedef bool (*FnDK_GetEntityPosition)(void* pEntity, float* outX, float* outY, float* outZ);
 
-typedef void (*FnDK_Log)(int level, const char* msg);
+typedef void (*FnDK_Log)(int level, const char* msg);
+typedef void (*FnDK_ShowToast)(const char* message, float durationSec, uint32_t colorRgb);
 
 typedef void (*FnDK_Preset_SetGodMode)(bool enable);
 typedef void (*FnDK_Preset_SetGhostMode)(bool enable);
@@ -134,7 +135,8 @@ public:
         BIND_DK(DK_GetEntityComponent);
         BIND_DK(DK_GetEntityPosition);
 
-        BIND_DK(DK_Log);
+        BIND_DK(DK_Log);
+        BIND_DK(DK_ShowToast);
 
         BIND_DK(DK_Preset_SetGodMode);
         BIND_DK(DK_Preset_SetGhostMode);
@@ -220,7 +222,8 @@ public:
     FnDK_GetEntityComponent pfn_DK_GetEntityComponent = nullptr;
     FnDK_GetEntityPosition pfn_DK_GetEntityPosition = nullptr;
 
-    FnDK_Log pfn_DK_Log = nullptr;
+    FnDK_Log pfn_DK_Log = nullptr;
+    FnDK_ShowToast pfn_DK_ShowToast = nullptr;
 
     FnDK_Preset_SetGodMode pfn_DK_Preset_SetGodMode = nullptr;
     FnDK_Preset_SetGhostMode pfn_DK_Preset_SetGhostMode = nullptr;
@@ -286,6 +289,12 @@ inline void Log(int level, const char* msg) {
     }
 }
 
+
+inline void ShowToast(const std::string& message, float durationSec = 2.0f, uint32_t colorRgb = 0x00FF88) {
+    auto pfn = PluginHost::Instance().pfn_DK_ShowToast;
+    if (pfn) pfn(message.c_str(), durationSec, colorRgb);
+}
+
 inline void LogInfo(const char* fmt, ...) {
     char buf[1024];
     va_list args;

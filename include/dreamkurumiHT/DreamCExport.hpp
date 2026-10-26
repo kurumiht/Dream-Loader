@@ -560,6 +560,15 @@ DK_API size_t DK_Harmony_PatchAll() {
 
 DK_API void DK_Harmony_UnpatchAll() {
     dreamkurumi::DreamHarmony::UnpatchAll();
+}
+
+// ============================================================================
+// In-Game Toast Notification OSD
+// ============================================================================
+DK_API void DK_ShowToast(const char* message, float durationSec, uint32_t colorRgb) {
+    if (message) {
+        dreamkurumi::DreamToast::Instance().Show(message, durationSec, colorRgb);
+    }
 }
 
 } // extern "C"
