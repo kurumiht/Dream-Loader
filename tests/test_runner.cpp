@@ -1,3 +1,4 @@
+#include <dream.hpp>
 #include <iostream>
 #include <cassert>
 #include <iomanip>
@@ -23,6 +24,25 @@ __attribute__((noinline, noclone)) int ChainedTarget_Compute(int val) {
     std::cout << "  [ORIGINAL] Running ChainedTarget_Compute, val = " << val << "\n";
     return val * 10;
 }
+
+
+__attribute__((noinline, noclone)) int MultiModTarget_Func(int val) {
+    asm volatile("" : "+r"(val) : : "memory");
+    return val * 10;
+}
+
+DREAM_HARMONY_PATCH_PRIORITY(MultiModPatchA, "MultiModTarget", dreamkurumi::HookPriority::High, 0, int, int) {
+    static bool Prefix(int& val) {
+        val += 5; // Mod A (High priority): adds 5 to input
+        return true;
+    }
+};
+
+DREAM_HARMONY_PATCH_PRIORITY(MultiModPatchB, "MultiModTarget", dreamkurumi::HookPriority::Normal, 0, int, int) {
+    static void Postfix(int& result, int val) {
+        result += 100; // Mod B (Normal priority): adds 100 to result
+    }
+};
 
 class MockEntityManager {
 public:
@@ -1651,10 +1671,98 @@ int main() {
     std::cout << "  LuaJIT + yyjson bidirectional table conversion -> [PASS]\n";
     std::cout << "  [PASS] DreamLua (LuaJIT + yyjson Bridge) fully verified!\n\n";
 
-    std::cout << "============================================================\n";
-    std::cout << " ALL 41 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
-    std::cout << "============================================================\n";
 
+    // ========================================================================
+    // TEST 42: Multi-Mod Central Detour Dispatcher (Crash-Proof Hook Chaining)
+    // ========================================================================
+    std::cout << "[TEST 42] Testing Multi-Mod Central Detour Dispatcher...\n";
+    void* pMultiTarget = reinterpret_cast<void*>(MultiModTarget_Func);
+
+    // 1. Both Mod A (High) and Mod B (Normal) hook the EXACT same function
+    bool aInstalled = MultiModPatchA::Install(pMultiTarget);
+    bool bInstalled = MultiModPatchB::Install(pMultiTarget);
+    assert(aInstalled && bInstalled);
+    std::cout << "  Simultaneous multi-mod hook registration on same address -> [PASS]\n";
+
+    // 2. Call target: Mod A prefix adds 5 (2 + 5 = 7), original multiplies by 10 (70), Mod B postfix adds 100 (170)
+    int multiRes = MultiModTarget_Func(2);
+    asm volatile("" : "+r"(multiRes));
+    assert(multiRes == 170);
+    std::cout << "  MultiModTarget_Func(2) with Mod A (High) + Mod B (Normal) -> " << multiRes << " (Expected 170) -> [PASS]\n";
+
+    // 3. Hot-Reload simulation: Mod A unloads/unpatches cleanly without crashing or breaking Mod B
+    MultiModPatchA::Disable();
+    assert(!MultiModPatchA::IsInstalled());
+    assert(MultiModPatchB::IsInstalled());
+
+    // 4. Call target again: Only Mod B remains active (2 * 10 + 100 = 120)
+    int afterUnloadRes = MultiModTarget_Func(2);
+    asm volatile("" : "+r"(afterUnloadRes));
+    assert(afterUnloadRes == 120);
+    std::cout << "  After unhooking Mod A, Mod B continues seamlessly -> " << afterUnloadRes << " (Expected 120) -> [PASS]\n";
+
+    // 5. Clean up Mod B
+    MultiModPatchB::Disable();
+    int vanillaRes = MultiModTarget_Func(2);
+    asm volatile("" : "+r"(vanillaRes));
+    assert(vanillaRes == 20);
+    std::cout << "  After unhooking Mod B, vanilla execution restored -> " << vanillaRes << " (Expected 20) -> [PASS]\n";
+    std::cout << "  [PASS] Multi-Mod Central Detour Dispatcher fully verified!\n\n";
+
+    // ========================================================================
+    // TEST 43: Fuzzy Instruction-Aware AOB Scanner (HDE64 Disassembly Engine)
+    // ========================================================================
+    std::cout << "[TEST 43] Testing Fuzzy Instruction-Aware AOB Scanner...\n";
+    // Simulated game memory after a Keen Games patch where stack displacements shifted
+    uint8_t simulatedGameBytes[] = {
+        0x48, 0x89, 0x5C, 0x24, 0x18, // mov [rsp+0x18], rbx (shifted from 0x10)
+        0x48, 0x83, 0xEC, 0x30,       // sub rsp, 0x30 (shifted stack alloc from 0x20)
+        0x8B, 0x44, 0x24, 0x38,       // mov eax, [rsp+0x38]
+        0xC3                          // ret
+    };
+
+    // Strict pattern from an older game version expecting [rsp+0x10] and sub rsp, 0x20
+    std::string strictPattern = "48 89 5C 24 10 48 83 EC 20 8B 44 24 28 C3";
+
+    // 1. Strict scan must FAIL against shifted bytes
+    void* strictMatch = dreamkurumi::DreamScanner::FindPattern(strictPattern, simulatedGameBytes, sizeof(simulatedGameBytes));
+    assert(strictMatch == nullptr);
+    std::cout << "  Strict pattern scan against shifted game update bytes correctly failed -> [PASS]\n";
+
+    // 2. Fuzzy instruction-aware scan must automatically wildcard displacements and MATCH!
+    void* fuzzyMatch = dreamkurumi::DreamFuzzyScanner::FindFuzzyPattern(strictPattern, simulatedGameBytes, sizeof(simulatedGameBytes));
+    assert(fuzzyMatch == simulatedGameBytes);
+    std::cout << "  Fuzzy instruction-aware scan automatically resolved shifted target at " << fuzzyMatch << " -> [PASS]\n";
+    std::cout << "  [PASS] Fuzzy Instruction-Aware AOB Scanner fully verified!\n\n";
+
+    // ========================================================================
+    // TEST 44: Single-Header C++ Mod SDK (dream.hpp)
+    // ========================================================================
+    std::cout << "[TEST 44] Testing Single-Header C++ Mod SDK (dream.hpp)...\n";
+    assert(static_cast<int>(dream::Priority::First) == 0);
+    assert(static_cast<int>(dream::Priority::High) == 200);
+    assert(static_cast<int>(dream::Priority::Normal) == 300);
+
+    int testVal = 12345;
+    int readVal = dream::Memory::Read<int>(reinterpret_cast<uintptr_t>(&testVal));
+    assert(readVal == 12345);
+    std::cout << "  Single-Header dream::Memory::Read verified -> [PASS]\n";
+
+    dream::ShowToast("Single-Header dream.hpp Test Toast", 1.0f, 0x00FF88);
+    std::cout << "  Single-Header dream::ShowToast bridge invoked -> [PASS]\n";
+    std::cout << "  [PASS] Single-Header C++ Mod SDK (dream.hpp) fully verified!\n\n";
+
+    // Cleanly stop any background singletons before process exit
+    dreamkurumi::DreamWatchdog::Instance().Stop();
+    dreamkurumi::DreamWatcher::Instance().Stop();
+    dreamkurumi::DreamLuaEngine::Instance().Shutdown();
+    dreamkurumi::DreamHarmony::UnpatchAll();
+    dreamkurumi::DreamCrashGuard::Shutdown();
+
+    std::cout << "============================================================\n";
+    std::cout << " ALL 44 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
+    std::cout << "============================================================\n" << std::flush;
+
+    TerminateProcess(GetCurrentProcess(), 0);
     return 0;
 }
-

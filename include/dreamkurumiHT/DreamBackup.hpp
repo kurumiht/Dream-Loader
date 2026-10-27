@@ -213,7 +213,7 @@ public:
     void StopAutoBackup() {
         if (!m_autoRunning.exchange(false)) return;
         if (m_autoThread.joinable()) {
-            m_autoThread.detach();
+            m_autoThread.join();
         }
         DREAM_LOG_INFO("[DreamBackup] Auto-backup thread stopped");
     }

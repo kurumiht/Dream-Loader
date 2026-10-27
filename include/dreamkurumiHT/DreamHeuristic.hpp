@@ -5,6 +5,7 @@
 #include <vector>
 #include <functional>
 #include "DreamScanner.hpp"
+#include "DreamFuzzyScanner.hpp"
 #include "DreamCache.hpp"
 #include "DreamLog.hpp"
 
@@ -12,7 +13,8 @@ namespace dreamkurumi {
 
 // ============================================================================
 // Multi-Tier Heuristic Definition
-// Provides Primary, Secondary (wildcarded), and Anchor-prologue fallback patterns
+// Provides Primary, Secondary (wildcarded), Fuzzy (instruction-aware),
+// and Anchor-prologue fallback patterns
 // ============================================================================
 struct HeuristicSignature {
     std::string name;
@@ -28,8 +30,9 @@ enum class HeuristicMatchTier {
     Cache = 1,
     Primary = 2,
     Secondary = 3,
-    Anchor = 4,
-    Fallback = 5
+    Fuzzy = 4,
+    Anchor = 5,
+    Fallback = 6
 };
 
 // ============================================================================
@@ -43,8 +46,7 @@ public:
         return s_instance;
     }
 
-    // Resolves a symbol using the multi-tier heuristic pipeline:
-    // 1. Cache -> 2. Primary -> 3. Secondary Heuristic -> 4. Anchor Proximity -> 5. Fallback RVA
+    // Resolves a symbol across all 6 resilience tiers
     void* Resolve(const HeuristicSignature& sig, HeuristicMatchTier* outTier = nullptr) {
         if (outTier) *outTier = HeuristicMatchTier::None;
 
@@ -80,14 +82,27 @@ public:
             if (found) {
                 uintptr_t rva = reinterpret_cast<uintptr_t>(found) - moduleBase;
                 cache.Store(sig.name.c_str(), rva);
-                DREAM_LOG_WARN("DreamHeuristic: [PATCH RESILIENT] '%s' resolved via [Secondary Heuristic Pattern] at %p (RVA: +0x%llX)",
+                DREAM_LOG_WARN("DreamHeuristic: [PATCH RESILIENT] '%s' resolved via [Secondary Pattern] at %p (RVA: +0x%llX)",
                                sig.name.c_str(), found, static_cast<unsigned long long>(rva));
                 if (outTier) *outTier = HeuristicMatchTier::Secondary;
                 return found;
             }
         }
 
-        // Tier 4: Anchor Proximity / Function Prologue Scan
+        // Tier 4: Fuzzy Instruction-Aware Scan (Disassembly-based automatic masking via HDE64)
+        if (!sig.primaryPattern.empty()) {
+            void* found = DreamFuzzyScanner::FindFuzzyPattern(sig.primaryPattern);
+            if (found) {
+                uintptr_t rva = reinterpret_cast<uintptr_t>(found) - moduleBase;
+                cache.Store(sig.name.c_str(), rva);
+                DREAM_LOG_WARN("DreamHeuristic: [FUZZY INSTRUCTION SCAN] '%s' resolved via instruction-aware fuzzy scan at %p (RVA: +0x%llX)",
+                               sig.name.c_str(), found, static_cast<unsigned long long>(rva));
+                if (outTier) *outTier = HeuristicMatchTier::Fuzzy;
+                return found;
+            }
+        }
+
+        // Tier 5: Anchor Proximity / Function Prologue Scan
         if (!sig.anchorPattern.empty()) {
             void* anchor = DreamScanner::FindPattern(sig.anchorPattern.c_str());
             if (anchor) {
@@ -110,7 +125,7 @@ public:
             }
         }
 
-        // Tier 5: Fallback RVA
+        // Tier 6: Fallback RVA
         if (sig.fallbackRva != 0) {
             void* fallbackAddr = reinterpret_cast<void*>(moduleBase + sig.fallbackRva);
             DREAM_LOG_WARN("DreamHeuristic: [FALLBACK RVA] '%s' pattern matching failed; using hardcoded RVA +0x%llX at %p",
@@ -148,7 +163,16 @@ public:
             }
         }
 
-        // Tier 4: Anchor Proximity / Function Prologue Scan
+        // Tier 4: Fuzzy Instruction-Aware Scan
+        if (!sig.primaryPattern.empty()) {
+            void* found = DreamFuzzyScanner::FindFuzzyPattern(sig.primaryPattern, buffer, bufferSize);
+            if (found) {
+                if (outTier) *outTier = HeuristicMatchTier::Fuzzy;
+                return found;
+            }
+        }
+
+        // Tier 5: Anchor Proximity / Function Prologue Scan
         if (!sig.anchorPattern.empty()) {
             void* anchor = DreamScanner::FindPattern(sig.anchorPattern, buffer, bufferSize);
             if (anchor) {
@@ -165,7 +189,7 @@ public:
             }
         }
 
-        // Tier 5: Fallback RVA (offset from buffer start)
+        // Tier 6: Fallback RVA (offset from buffer start)
         if (sig.fallbackRva != 0 && sig.fallbackRva < bufferSize) {
             void* fallbackAddr = const_cast<uint8_t*>(base + sig.fallbackRva);
             if (outTier) *outTier = HeuristicMatchTier::Fallback;
@@ -178,34 +202,44 @@ public:
     // Scans backwards from an anchor point to find the x64 function entry prologue
     static void* ScanBackwardForPrologue(void* anchorAddr, size_t maxScanBytes = 512) {
         if (!anchorAddr) return nullptr;
+
         uint8_t* curr = reinterpret_cast<uint8_t*>(anchorAddr);
+        for (size_t i = 0; i < maxScanBytes; ++i) {
+            uint8_t* p = curr - i;
 
-        for (size_t i = 1; i < maxScanBytes; ++i) {
-            uint8_t* candidate = curr - i;
-
-            // Pattern A: 55 48 89 E5 (push rbp; mov rbp, rsp)
-            if (candidate[0] == 0x55 && candidate[1] == 0x48 && candidate[2] == 0x89 && candidate[3] == 0xE5) {
-                return candidate;
+            // Pattern A: 48 89 5C 24 ?? (mov [rsp+??], rbx)
+            if (p[0] == 0x48 && p[1] == 0x89 && p[2] == 0x5C && p[3] == 0x24) {
+                return p;
             }
 
-            // Pattern B: 48 89 5C 24 (mov [rsp+??], rbx)
-            if (candidate[0] == 0x48 && candidate[1] == 0x89 && candidate[2] == 0x5C && candidate[3] == 0x24) {
-                // Must be preceded by INT3 (0xCC) or RET (0xC3)
-                if (candidate[-1] == 0xCC || candidate[-1] == 0xC3) {
-                    return candidate;
+            // Pattern B: 48 83 EC ?? (sub rsp, ??)
+            if (p[0] == 0x48 && p[1] == 0x83 && p[2] == 0xEC) {
+                // Check if preceded by push rbp; mov rbp, rsp (55 48 89 E5 or 55 48 8B EC)
+                if (p >= curr - maxScanBytes + 4 && *(p - 4) == 0x55 && *(p - 3) == 0x48 &&
+                    ((*(p - 2) == 0x89 && *(p - 1) == 0xE5) || (*(p - 2) == 0x8B && *(p - 1) == 0xEC))) {
+                    return p - 4;
                 }
-            }
-
-            // Pattern C: 48 83 EC ?? (sub rsp, ??) preceded by CC or C3
-            if (candidate[0] == 0x48 && candidate[1] == 0x83 && candidate[2] == 0xEC) {
-                if (candidate[-1] == 0xCC || candidate[-1] == 0xC3) {
-                    return candidate;
+                // If preceded by standard push rbp or push rdi (0x55 or 0x57)
+                if (p > curr - maxScanBytes && (*(p - 1) == 0x55 || *(p - 1) == 0x57 || *(p - 1) == 0x53)) {
+                    return p - 1;
                 }
+                return p;
             }
 
-            // Pattern D: 40 53 48 83 EC (push rbx; sub rsp, ??)
-            if (candidate[0] == 0x40 && candidate[1] == 0x53 && candidate[2] == 0x48 && candidate[3] == 0x83 && candidate[4] == 0xEC) {
-                return candidate;
+            // Pattern C: 40 53 48 83 EC (push rbx; sub rsp, ??)
+            if (p[0] == 0x40 && p[1] == 0x53 && p[2] == 0x48 && p[3] == 0x83 && p[4] == 0xEC) {
+                return p;
+            }
+
+            // Pattern D: 55 48 89 E5 or 55 48 8B EC (push rbp; mov rbp, rsp)
+            if (p[0] == 0x55 && p[1] == 0x48 && ((p[2] == 0x89 && p[3] == 0xE5) || (p[2] == 0x8B && p[3] == 0xEC))) {
+                return p;
+            }
+
+            // Stop backward scan if we hit a CC int3 or C3 ret alignment padding boundary
+            if (i > 16 && (p[0] == 0xC3 || p[0] == 0xCC)) {
+                // Return the instruction immediately following the alignment padding
+                return p + 1;
             }
         }
 

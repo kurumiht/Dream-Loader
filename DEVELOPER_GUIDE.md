@@ -178,7 +178,7 @@ Framework มีระบบ **Universal Auto-Discovery** ซึ่งจะอ�
 {
   "name": "DreamAoEHarvest",
   "displayName": "Dream AoE Crop Harvest",
-  "version": "1.0.0",
+  "version": "3.5.0",
   "author": "dreamkurumi",
   "description": "AoE farming crop harvesting with 3.5m radius and F8 hotkey toggle.",
   "website": "https://github.com/your-repo/enshrouded-mods"
@@ -453,7 +453,7 @@ using namespace dreamkurumi;
 ### 7.1 สถาปัตยกรรม Double-Buffer Queue & Background Worker (<1µs Overhead)
 ในการเล่นเกมที่ 144+ FPS หรือบน Dedicated Server ที่มี Entity นับหมื่นตัว การเขียน Log ลงดิสก์ (`std::ofstream`) บน Game Thread โดยตรงจะทำให้เกมเกิดอาการ **Micro-stutter / Frame Drop** ทันที
 
-`dreamkurumiHT v3.4.0` ปรับใช้สถาปัตยกรรม **Double-Buffered Lock-Free Queue**:
+`dreamkurumiHT v3.5.0` ปรับใช้สถาปัตยกรรม **Double-Buffered Lock-Free Queue**:
 ```text
 [Game Thread 1] ---> \
 [Game Thread 2] -----> [ Incoming Lock-Free Queue ]  <-- Overhead < 1 ไมโครวินาที (0 Disk I/O)

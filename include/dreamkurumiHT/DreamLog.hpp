@@ -431,7 +431,7 @@ private:
         m_workerRunning.store(false);
         m_queueCv.notify_all();
         if (m_workerThread.joinable()) {
-            m_workerThread.detach();
+            m_workerThread.join();
         }
         Flush();
         if (m_fileHandle) {

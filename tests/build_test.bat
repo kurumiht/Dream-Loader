@@ -9,7 +9,7 @@ echo ========================================================
 echo   Compiling dreamkurumiHT Test Suite (C++20)...
 echo ========================================================
 
-g++ -std=c++20 -O2 -I../include test_runner.cpp ../include/dreamkurumiHT/hde/hde64.c ../include/dreamkurumiHT/yyjson/yyjson.c -o test_dreamkurumi.exe -L../lib -llua51 -static-libgcc -static-libstdc++ -lpsapi -ldbghelp
+g++ -std=c++20 -O2 -I../include test_runner.cpp ../include/dreamkurumiHT/hde/hde64.c ../include/dreamkurumiHT/yyjson/yyjson.c -o test_dreamkurumi.exe -L../lib -llua51 -static-libgcc -static-libstdc++ -lpsapi -ldbghelp -luser32 -lgdi32 -lws2_32
 
 if %errorlevel% neq 0 (
     echo [ERROR] Compilation failed!

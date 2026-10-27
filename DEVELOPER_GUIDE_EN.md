@@ -175,7 +175,7 @@ The framework automatically parses metadata from your mod's directory:
 {
   "name": "DreamAoEHarvest",
   "displayName": "Dream AoE Crop Harvest",
-  "version": "1.0.0",
+  "version": "3.5.0",
   "author": "dreamkurumi",
   "description": "AoE farming crop harvesting with 3.5m radius and F8 hotkey toggle.",
   "website": "https://github.com/your-repo/enshrouded-mods"

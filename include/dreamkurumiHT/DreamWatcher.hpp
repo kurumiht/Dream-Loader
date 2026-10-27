@@ -74,7 +74,7 @@ public:
         if (!m_running.load()) return;
         m_running.store(false);
         if (m_workerThread.joinable()) {
-            m_workerThread.detach();
+            m_workerThread.join();
         }
         DREAM_LOG_INFO("DreamWatcher: File system watcher stopped");
     }

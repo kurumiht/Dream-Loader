@@ -208,7 +208,7 @@ public:
         if (!m_isRunning.load()) return;
         m_isRunning.store(false);
         if (m_monitorThread.joinable()) {
-            m_monitorThread.detach();
+            m_monitorThread.join();
         }
         DREAM_LOG_INFO("DreamWatchdog: Background monitor stopped");
     }
