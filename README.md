@@ -181,7 +181,7 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 44. **Single-Header C++ Mod SDK (`dream.hpp` / `dreamkurumi.hpp`)**
     - Single `#include <dream.hpp>` drop-in SDK for modders with `DREAM_PLUGIN`, `DREAM_PATCH`, and safe memory sandboxing.
     - **Hardware DWM Layered Click-Through Toast Engine (`DreamToast` / `dream::ShowToast`):** Fast, zero-lag in-game visual toast notification HUD.
-      *(เราทดสอบไปบ้างแล้วและยังไม่พบปัญหา ถ้าหากพบปัญหาช่วยแจ้งไว้ได้เลย / Tested thoroughly without issues found; please feel free to report if you encounter any problems)*
+      *(Tested thoroughly without issues found so far; please feel free to report if you encounter any problems.)*
 
 ---
 
