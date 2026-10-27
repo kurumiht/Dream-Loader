@@ -1750,9 +1750,14 @@ int main() {
 
     dream::ShowToast("Single-Header dream.hpp Test Toast", 1.0f, 0x00FF88);
     std::cout << "  Single-Header dream::ShowToast bridge invoked -> [PASS]\n";
+
+    // Direct hardware toast engine verification
+    dreamkurumi::DreamToast::Instance().Show("Hardware DWM Toast Active", 0.4f, 0x00FF88);
+    std::cout << "  Hardware DWM Toast Engine invoked -> [PASS]\n";
     std::cout << "  [PASS] Single-Header C++ Mod SDK (dream.hpp) fully verified!\n\n";
 
     // Cleanly stop any background singletons before process exit
+    dreamkurumi::DreamToast::Instance().Shutdown();
     dreamkurumi::DreamWatchdog::Instance().Stop();
     dreamkurumi::DreamWatcher::Instance().Stop();
     dreamkurumi::DreamLuaEngine::Instance().Shutdown();

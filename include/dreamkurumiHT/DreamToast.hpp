@@ -9,6 +9,7 @@
 #include <queue>
 #include <vector>
 #include "DreamLog.hpp"
+#include "DreamEnv.hpp"
 
 namespace dreamkurumi {
 
@@ -30,6 +31,7 @@ public:
     }
 
     void Show(const std::string& utf8Message, float durationSec = 2.0f, uint32_t colorRgb = 0x00FF88) {
+        if (DreamEnv::IsDedicatedServer()) return;
         if (utf8Message.empty()) return;
 
         // Convert UTF-8 to WString
@@ -48,6 +50,7 @@ public:
     }
 
     void ShowW(const std::wstring& message, float durationSec = 2.0f, uint32_t colorRgb = 0x00FF88) {
+        if (DreamEnv::IsDedicatedServer()) return;
         if (message.empty()) return;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
