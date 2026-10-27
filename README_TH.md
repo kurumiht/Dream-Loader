@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **โมเดิร์นเนทีฟ Harmony Hooking & Modding Framework สำหรับ C++20 บน Windows x64**  
 > *(ไม่ต้องเขียน Assembly, ไม่ต้องสแกนแรม, ดักจับผ่าน Hardware Breakpoint VEH, ประสิทธิภาพสูงสุดสำหรับ Keen Games Engine)*  
-> **เวอร์ชันของ Framework:** `3.4.0` | **สถาปัตยกรรม:** Windows x64 | **เกมที่รองรับ:** Enshrouded 1.0+
+> **เวอร์ชันของ Framework:** `3.5.0` | **สถาปัตยกรรม:** Windows x64 | **เกมที่รองรับ:** Enshrouded 1.0+
 
 ---
 
@@ -16,7 +16,7 @@
 
 ---
 
-## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (41 Master Capabilities)
+## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (44 Master Capabilities)
 
 1. **Declarative Harmony API (`Prefix` / `Postfix`)**
    - เขียน Hook ง่าย สะอาด ไม่ต้องจำ Opcode หรือคำนวณ `E9 JMP`
@@ -176,9 +176,20 @@
     - ดักจับแพ็กเกจข้อความแชทที่ขึ้นต้นด้วย `/` (เช่น `/fc on`, `/god on`, `/help`, `/online`)
     - รันคำสั่งเซิร์ฟเวอร์แบบ Real-time พร้อมตัดข้อความคำสั่งออกจากแชทสาธารณะ (Silent Suppress) อัตโนมัติ
 
+42. **Multi-Mod Centralized Detour Dispatcher (`DreamDispatcher` / `DreamHarmony`)**
+    - ระบบจัดการ Hook ร่วมกัน ป้องกันการชนกันเมื่อมี Mod หลายตัวพยายาม Hook ฟังก์ชันเดียวกันในเกม
+    - จัดคิวการทำงานตามลำดับความสำคัญ `HookPriority` (`First`, `Highest`, `High`, `Normal`, `Low`, `Lowest`, `Last`)
+    - รองรับ Hot-Reload Unhook อย่างปลอดภัย ถอด Mod ตัวใดตัวหนึ่งออก Mod ตัวอื่นยังทำงานต่อได้ทันที
+43. **Fuzzy Instruction-Aware AOB Scanner (`DreamFuzzyScanner` / `DreamHeuristic`)**
+    - เอนจินถอดรหัส Machine Code HDE64 วิเคราะห์ความหมายคำสั่ง Assembly แบบ Dynamic
+    - แปลง Stack Displacement (`[rsp+0x10]` vs `[rsp+0x18]`), Stack Frame Alloc (`sub rsp, 0x20` vs `0x30`) และ Relative Offset เป็น Wildcard `??` อัตโนมัติ ทนทานต่อการอัปเดตแพตช์เกม
+44. **Single-Header C++ Mod SDK (`dream.hpp` / `dreamkurumi.hpp`)**
+    - SDK รวมจบในไฟล์เดียว `#include <dream.hpp>` พร้อม Macro `DREAM_PLUGIN`, `DREAM_PATCH` และ Safe Memory Sandboxing
+    - **Hardware DWM Layered Click-Through Toast Engine (`DreamToast` / `dream::ShowToast`):** Fast, zero-lag in-game visual toast notification HUD
+      *(เราทดสอบไปบ้างแล้วและยังไม่พบปัญหา ถ้าหากพบปัญหาช่วยแจ้งไว้ได้เลย)*
 ---
 
-## ผลการทดสอบ (Verification Suite 41/41 ผ่านหมด 100%)
+## ผลการทดสอบ (Verification Suite 44/44 ผ่านหมด 100%)
 
 ```text
 [TEST 1] Testing DreamCache...                         -> [PASS]

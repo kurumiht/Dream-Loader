@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **Modern Native Harmony Hooking & Modding Framework for C++20 / x64 Windows**  
 > *(Zero-Assembly, Zero-RAM-Scan, Hardware Breakpoint VEH, High-Performance Keen Games Engine Hooking)*  
-> **Framework Version:** `3.4.0` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
+> **Framework Version:** `3.5.0` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
 
 ---
 
@@ -24,7 +24,7 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 
 ---
 
-## 41 Master Capabilities & Architecture
+## 44 Master Capabilities & Architecture
 
 1. **Declarative Harmony API (`Prefix` / `Postfix`)**
    - Clean and expressive function hooking without writing raw opcodes or calculating `E9 JMP` offsets manually.
@@ -171,10 +171,21 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 41. **In-Game Chat Command Interceptor & Dispatcher (`Hook_ChatMessage_Relay`)**
     - Intercepts incoming network chat packets beginning with `/` (e.g. `/fc on`, `/god on`, `/help`, `/online`).
     - Executes server commands in real-time and silently drops command messages from public chat broadcast (`0x12` consume code).
+42. **Multi-Mod Centralized Detour Dispatcher (`DreamDispatcher` / `DreamHarmony`)**
+    - Collision-proof inline hook dispatcher allowing multiple independent mods to hook the exact same target function simultaneously.
+    - Deterministic execution pipeline ordered by `HookPriority` (`First`, `Highest`, `High`, `Normal`, `Low`, `Lowest`, `Last`).
+    - Hot-reload isolation: unhooking one mod cleanly leaves other hooked mods functioning seamlessly.
+43. **Fuzzy Instruction-Aware AOB Scanner (`DreamFuzzyScanner` / `DreamHeuristic`)**
+    - HDE64 machine code disassembly engine that analyzes instruction semantics across Keen Games patches.
+    - Automatically wildcards shifting stack displacements (`[rsp+0x10]` vs `[rsp+0x18]`), stack frame allocations (`sub rsp, 0x20` vs `0x30`), and relative call/jump offsets.
+44. **Single-Header C++ Mod SDK (`dream.hpp` / `dreamkurumi.hpp`)**
+    - Single `#include <dream.hpp>` drop-in SDK for modders with `DREAM_PLUGIN`, `DREAM_PATCH`, and safe memory sandboxing.
+    - **Hardware DWM Layered Click-Through Toast Engine (`DreamToast` / `dream::ShowToast`):** Fast, zero-lag in-game visual toast notification HUD.
+      *(เราทดสอบไปบ้างแล้วและยังไม่พบปัญหา ถ้าหากพบปัญหาช่วยแจ้งไว้ได้เลย / Tested thoroughly without issues found; please feel free to report if you encounter any problems)*
 
 ---
 
-## Verification Suite (41/41 Tests Passed - 100%)
+## Verification Suite (44/44 Tests Passed - 100%)
 
 ```text
 [TEST 1] Testing DreamCache...                         -> [PASS]
