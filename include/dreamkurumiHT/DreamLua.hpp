@@ -20,6 +20,9 @@
 #include "DreamTracer.hpp"
 #include "DreamHook.hpp"
 #include "DreamEventBus.hpp"
+#include "DreamStore.hpp"
+#include "DreamRpcMultiplexer.hpp"
+#include "DreamDiagnosticOverlay.hpp"
 #include <string>
 #include <functional>
 #include <iostream>
@@ -202,8 +205,24 @@ private:
         pushHex("r13", ctx.r13);
         pushHex("r14", ctx.r14);
         pushHex("r15", ctx.r15);
-        lua_pushnumber(L, ctx.xmm[0].f32[0]); lua_setfield(L, -2, "xmm0");
-        lua_pushnumber(L, ctx.xmm[1].f32[0]); lua_setfield(L, -2, "xmm1");
+
+        // Extended SIMD / AVX2 Registers (Item 1 & Item 10)
+        for (int i = 0; i < 16; ++i) {
+            char nameXmm[16];
+            snprintf(nameXmm, sizeof(nameXmm), "xmm%d", i);
+            lua_pushnumber(L, ctx.xmm[i].f32[0]);
+            lua_setfield(L, -2, nameXmm);
+
+            char nameYmmLo[16];
+            snprintf(nameYmmLo, sizeof(nameYmmLo), "ymm%d_lo", i);
+            lua_pushnumber(L, ctx.ymm[i].f32[0]);
+            lua_setfield(L, -2, nameYmmLo);
+
+            char nameYmmHi[16];
+            snprintf(nameYmmHi, sizeof(nameYmmHi), "ymm%d_hi", i);
+            lua_pushnumber(L, ctx.ymm[i].f32[4]);
+            lua_setfield(L, -2, nameYmmHi);
+        }
 
         DreamCrashGuard::ExecuteSafely("LuaMidHook", [&]() {
             if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -647,6 +666,91 @@ private:
         return 1;
     }
 
+    // Item 9: Atomic Key-Value Store Lua Bindings
+    static int Lua_StoreSet(lua_State* L) {
+        const char* nsName = luaL_checkstring(L, 1);
+        const char* key = luaL_checkstring(L, 2);
+        auto ns = DreamStore::Instance().GetNamespace(nsName);
+        if (!ns) return 0;
+
+        if (lua_isboolean(L, 3)) {
+            ns->SetBool(key, lua_toboolean(L, 3) != 0);
+        } else if (lua_type(L, 3) == LUA_TNUMBER) {
+            lua_Number num = lua_tonumber(L, 3);
+            if (num == std::floor(num) && !std::isinf(num) && !std::isnan(num)) {
+                ns->SetInt(key, static_cast<int64_t>(num));
+            } else {
+                ns->SetDouble(key, num);
+            }
+        } else if (lua_type(L, 3) == LUA_TSTRING) {
+            ns->SetString(key, lua_tostring(L, 3));
+        }
+        return 0;
+    }
+
+    static int Lua_StoreGet(lua_State* L) {
+        const char* nsName = luaL_checkstring(L, 1);
+        const char* key = luaL_checkstring(L, 2);
+        auto ns = DreamStore::Instance().GetNamespace(nsName);
+        if (!ns || !ns->Contains(key)) {
+            if (lua_gettop(L) >= 3) {
+                lua_pushvalue(L, 3);
+                return 1;
+            }
+            lua_pushnil(L);
+            return 1;
+        }
+
+        std::string s = ns->GetString(key);
+        lua_pushstring(L, s.c_str());
+        return 1;
+    }
+
+    static int Lua_StoreFlush(lua_State* L) {
+        const char* nsName = luaL_optstring(L, 1, "");
+        if (nsName && strlen(nsName) > 0) {
+            bool ok = DreamStore::Instance().FlushNamespace(nsName);
+            lua_pushboolean(L, ok ? 1 : 0);
+        } else {
+            size_t count = DreamStore::Instance().FlushAll();
+            lua_pushinteger(L, static_cast<lua_Integer>(count));
+        }
+        return 1;
+    }
+
+    // Item 8: Custom Network RPC Lua Bindings
+    static int Lua_RpcCall(lua_State* L) {
+        uint32_t targetId = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+        const char* rpcName = luaL_checkstring(L, 2);
+        const char* payload = luaL_optstring(L, 3, "");
+
+        NetBufferWriter writer;
+        writer.WriteString(payload);
+
+        bool ok = false;
+        if (targetId == 0) {
+            ok = DreamRpcMultiplexer::Instance().CallServer(rpcName, writer);
+        } else if (targetId == 0xFFFFFFFF) {
+            ok = DreamRpcMultiplexer::Instance().Broadcast(rpcName, writer);
+        } else {
+            ok = DreamRpcMultiplexer::Instance().CallClient(targetId, rpcName, writer);
+        }
+        lua_pushboolean(L, ok ? 1 : 0);
+        return 1;
+    }
+
+    // Item 7: Diagnostic Overlay Lua Bindings
+    static int Lua_OverlayToggle(lua_State* L) {
+        DreamDiagnosticOverlay::Instance().Toggle();
+        lua_pushboolean(L, DreamDiagnosticOverlay::Instance().IsVisible() ? 1 : 0);
+        return 1;
+    }
+
+    static int Lua_OverlayIsVisible(lua_State* L) {
+        lua_pushboolean(L, DreamDiagnosticOverlay::Instance().IsVisible() ? 1 : 0);
+        return 1;
+    }
+
 public:
     static DreamLuaEngine& Instance() {
         static DreamLuaEngine s_instance;
@@ -714,6 +818,18 @@ public:
         // Recurring Timers
         lua_pushcfunction(m_L, Lua_SetInterval); lua_setfield(m_L, -2, "set_interval");
         lua_pushcfunction(m_L, Lua_ClearInterval); lua_setfield(m_L, -2, "clear_interval");
+
+        // Item 9: Atomic Key-Value Storage APIs
+        lua_pushcfunction(m_L, Lua_StoreSet); lua_setfield(m_L, -2, "store_set");
+        lua_pushcfunction(m_L, Lua_StoreGet); lua_setfield(m_L, -2, "store_get");
+        lua_pushcfunction(m_L, Lua_StoreFlush); lua_setfield(m_L, -2, "store_flush");
+
+        // Item 8: Custom Network RPC APIs
+        lua_pushcfunction(m_L, Lua_RpcCall); lua_setfield(m_L, -2, "rpc_call");
+
+        // Item 7: In-Game Diagnostic Overlay APIs
+        lua_pushcfunction(m_L, Lua_OverlayToggle); lua_setfield(m_L, -2, "overlay_toggle");
+        lua_pushcfunction(m_L, Lua_OverlayIsVisible); lua_setfield(m_L, -2, "overlay_is_visible");
 
         lua_setglobal(m_L, "dream");
 
@@ -802,7 +918,11 @@ public:
     void Shutdown() {
         m_timerRunning = false;
         if (m_timerThread.joinable()) {
-            m_timerThread.join();
+            if (m_timerThread.get_id() != std::this_thread::get_id()) {
+                m_timerThread.join();
+            } else {
+                m_timerThread.detach();
+            }
         }
 
         std::lock_guard<std::recursive_mutex> lock(m_mutex);

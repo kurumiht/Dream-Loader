@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **Modern Native Harmony Hooking & Modding Framework for C++20 / x64 Windows**  
 > *(Zero-Assembly, Zero-RAM-Scan, Hardware Breakpoint VEH, High-Performance Keen Games Engine Hooking)*  
-> **Framework Version:** `3.5.0` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
+> **Framework Version:** `3.8.0` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
 
 ---
 
@@ -9,8 +9,8 @@
   <b>Language Switcher / สลับภาษา:</b><br>
   <a href="README.md">🇬🇧 <b>English (Default)</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.5.0/Dream-Core-v3.5.0.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.5.0%20(Plug%20%26%20Play)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.5.0" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-Core-v3.8.0.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.8.0%20(Plug%20%26%20Play)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.0" />
   </a>
 </p>
 

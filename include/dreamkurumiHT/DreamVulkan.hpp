@@ -9,6 +9,8 @@
 #include "DreamPresets.hpp"
 #include "DreamOverlay.hpp"
 #include "DreamCrashGuard.hpp"
+#include "DreamScheduler.hpp"
+#include "DreamDiagnosticOverlay.hpp"
 
 namespace dreamkurumi {
 
@@ -114,6 +116,9 @@ public:
     void OnFramePresent(VkQueue queue, const VkPresentInfoKHR* pPresentInfo) {
         m_frameCount++;
 
+        // Process scheduled tasks on the Game/Render main thread safely within 1ms budget
+        DreamScheduler::Instance().Tick(1.0);
+
         // Calculate real-time FPS
         auto now = std::chrono::steady_clock::now();
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastFpsCheck).count();
@@ -130,6 +135,11 @@ public:
                 m_presentCallback(queue, pPresentInfo);
             });
         }
+
+        // Native In-Game ImGui Diagnostic Overlay (Item 7)
+        DreamDiagnosticOverlay::Instance().UpdateMetrics(m_currentFps.load(), (m_currentFps.load() > 0.0f) ? (1000.0f / m_currentFps.load()) : 16.6f);
+        DreamDiagnosticOverlay::Instance().PollInput();
+        DreamDiagnosticOverlay::Instance().OnVulkanPresent();
 
         // When in-game menu is toggled open via F9, trigger overlay render
         if (DreamOverlay::Instance().IsMenuOpen()) {

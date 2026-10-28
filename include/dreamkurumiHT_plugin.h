@@ -14,6 +14,63 @@
 
 namespace dreamkurumi {
 
+// ============================================================================
+// Extended SIMD / AVX2 CPU Register Context for Plugins (v3.8.0-beta)
+// ============================================================================
+#pragma pack(push, 1)
+struct DreamYmmRegister {
+    union {
+        float    f32[8];
+        double   f64[4];
+        uint32_t u32[8];
+        uint64_t u64[4];
+        uint8_t  u8[32];
+    };
+};
+
+struct DreamCpuContext {
+    union {
+        DreamYmmRegister ymm[16];   // 0x000 - 0x1FF (512 bytes, full 256-bit AVX/AVX2)
+        struct {
+            union {
+                float    f32[4];
+                double   f64[2];
+                uint32_t u32[4];
+                uint64_t u64[2];
+                uint8_t  u8[16];
+            };
+            uint8_t _pad_high[16];  // upper 128 bits of 256-bit YMM slot
+        } xmm[16];                  // 0x000 - 0x1FF (overlays with ymm[16] for 100% backward compatibility)
+    };
+
+    uint64_t r15;       // 0x200
+    uint64_t r14;       // 0x208
+    uint64_t r13;       // 0x210
+    uint64_t r12;       // 0x218
+    uint64_t r11;       // 0x220
+    uint64_t r10;       // 0x228
+    uint64_t r9;        // 0x230
+    uint64_t r8;        // 0x238
+    uint64_t rbp;       // 0x240
+    uint64_t rdi;       // 0x248
+    uint64_t rsi;       // 0x250
+    uint64_t rdx;       // 0x258
+    uint64_t rcx;       // 0x260
+    uint64_t rbx;       // 0x268
+    uint64_t rax;       // 0x270
+    uint64_t rflags;    // 0x278
+
+    float GetFloatArg(int index) const {
+        if (index >= 0 && index < 16) return xmm[index].f32[0];
+        return 0.0f;
+    }
+    void SetFloatArg(int index, float val) {
+        if (index >= 0 && index < 16) xmm[index].f32[0] = val;
+    }
+};
+#pragma pack(pop)
+
+
 // Function pointer signatures for all core dreamkurumiHT exports
 typedef bool (*FnDK_Initialize)(const char* cachePath);
 typedef size_t (*FnDK_PatchAll)();
@@ -37,8 +94,26 @@ typedef void* (*FnDK_GetEntity)(void* pContext, uint32_t entityId);
 typedef void* (*FnDK_GetEntityComponent)(void* pEntity, uint16_t compId);
 typedef bool (*FnDK_GetEntityPosition)(void* pEntity, float* outX, float* outY, float* outZ);
 
-typedef void (*FnDK_Log)(int level, const char* msg);
+typedef void (*FnDK_Log)(int level, const char* msg);
+
 typedef void (*FnDK_ShowToast)(const char* message, float durationSec, uint32_t colorRgb);
+
+typedef bool (*FnDK_Vulkan_ConfigureLayerEnvironment)(const char* layerDirPath, const char* layerName);
+typedef bool (*FnDK_Vulkan_GenerateLayerManifest)(const char* jsonPath, const char* layerName, const char* dllPath, const char* description);
+typedef bool (*FnDK_ChainLoader_LoadChainedDll)(const char* dllPath);
+typedef size_t (*FnDK_ChainLoader_ScanAndLoad)(const char* iniPath);
+typedef size_t (*FnDK_ChainLoader_GetCount)();
+typedef bool (*FnDK_Asset_RegisterOverride)(const char* resourceType, const char* resourceName, const void* data, size_t size, const char* originMod);
+typedef bool (*FnDK_Asset_GetOverride)(const char* resourceType, const char* resourceName, const void** outData, size_t* outSize);
+typedef bool (*FnDK_Asset_RegisterLocaTag)(const char* tag, const char* utf8Text);
+typedef void (*FnDK_Asset_ClearAll)();
+
+typedef uint64_t (*FnDK_Scheduler_Enqueue)(void (*fn)(void*), void* userData);
+typedef uint64_t (*FnDK_Scheduler_RunAfter)(uint32_t delayMs, void (*fn)(void*), void* userData);
+typedef bool (*FnDK_Scheduler_Cancel)(uint64_t taskId);
+typedef size_t (*FnDK_Scheduler_Tick)(double maxTimeBudgetMs);
+typedef bool (*FnDK_CpuSupportsAvx)();
+
 
 typedef void (*FnDK_Preset_SetGodMode)(bool enable);
 typedef void (*FnDK_Preset_SetGhostMode)(bool enable);
@@ -62,7 +137,6 @@ typedef void (*FnDK_Overlay_ToggleMenu)();
 typedef bool (*FnDK_Overlay_IsMenuOpen)();
 typedef void (*FnDK_Overlay_SetMenuKey)(int vKey);
 typedef bool (*FnDK_Overlay_ExecuteCommand)(const char* cmd);
-typedef void (*FnDK_Overlay_RegisterCommand)(const char* cmdName, void (*cb)(const char* args), const char* desc);
 
 typedef bool (*FnDK_Env_IsDedicatedServer)();
 typedef bool (*FnDK_Env_IsClient)();
@@ -96,6 +170,8 @@ typedef int (*FnDK_Config_GetInt)(const char* fullKey, int fallback);
 typedef void (*FnDK_Config_SetInt)(const char* fullKey, int val);
 typedef bool (*FnDK_Config_GetBool)(const char* fullKey, bool fallback);
 typedef void (*FnDK_Config_SetBool)(const char* fullKey, bool val);
+typedef bool (*FnDK_Config_GetString)(const char* fullKey, char* outBuffer, uint32_t outSize, const char* fallback);
+typedef void (*FnDK_Config_SetString)(const char* fullKey, const char* val);
 
 class PluginHost {
 public:
@@ -135,8 +211,24 @@ public:
         BIND_DK(DK_GetEntityComponent);
         BIND_DK(DK_GetEntityPosition);
 
-        BIND_DK(DK_Log);
+        BIND_DK(DK_Log);
+
         BIND_DK(DK_ShowToast);
+        BIND_DK(DK_Vulkan_ConfigureLayerEnvironment);
+        BIND_DK(DK_Vulkan_GenerateLayerManifest);
+        BIND_DK(DK_ChainLoader_LoadChainedDll);
+        BIND_DK(DK_ChainLoader_ScanAndLoad);
+        BIND_DK(DK_ChainLoader_GetCount);
+        BIND_DK(DK_Asset_RegisterOverride);
+        BIND_DK(DK_Asset_GetOverride);
+        BIND_DK(DK_Asset_RegisterLocaTag);
+        BIND_DK(DK_Asset_ClearAll);
+        BIND_DK(DK_Scheduler_Enqueue);
+        BIND_DK(DK_Scheduler_RunAfter);
+        BIND_DK(DK_Scheduler_Cancel);
+        BIND_DK(DK_Scheduler_Tick);
+        BIND_DK(DK_CpuSupportsAvx);
+
 
         BIND_DK(DK_Preset_SetGodMode);
         BIND_DK(DK_Preset_SetGhostMode);
@@ -192,6 +284,8 @@ public:
         BIND_DK(DK_Config_SetInt);
         BIND_DK(DK_Config_GetBool);
         BIND_DK(DK_Config_SetBool);
+        BIND_DK(DK_Config_GetString);
+        BIND_DK(DK_Config_SetString);
         #undef BIND_DK
 
         m_initialized = true;
@@ -222,8 +316,25 @@ public:
     FnDK_GetEntityComponent pfn_DK_GetEntityComponent = nullptr;
     FnDK_GetEntityPosition pfn_DK_GetEntityPosition = nullptr;
 
-    FnDK_Log pfn_DK_Log = nullptr;
+    FnDK_Log pfn_DK_Log = nullptr;
+
     FnDK_ShowToast pfn_DK_ShowToast = nullptr;
+    FnDK_Vulkan_ConfigureLayerEnvironment pfn_DK_Vulkan_ConfigureLayerEnvironment = nullptr;
+    FnDK_Vulkan_GenerateLayerManifest pfn_DK_Vulkan_GenerateLayerManifest = nullptr;
+    FnDK_ChainLoader_LoadChainedDll pfn_DK_ChainLoader_LoadChainedDll = nullptr;
+    FnDK_ChainLoader_ScanAndLoad pfn_DK_ChainLoader_ScanAndLoad = nullptr;
+    FnDK_ChainLoader_GetCount pfn_DK_ChainLoader_GetCount = nullptr;
+    FnDK_Asset_RegisterOverride pfn_DK_Asset_RegisterOverride = nullptr;
+    FnDK_Asset_GetOverride pfn_DK_Asset_GetOverride = nullptr;
+    FnDK_Asset_RegisterLocaTag pfn_DK_Asset_RegisterLocaTag = nullptr;
+    FnDK_Asset_ClearAll pfn_DK_Asset_ClearAll = nullptr;
+
+    FnDK_Scheduler_Enqueue pfn_DK_Scheduler_Enqueue = nullptr;
+    FnDK_Scheduler_RunAfter pfn_DK_Scheduler_RunAfter = nullptr;
+    FnDK_Scheduler_Cancel pfn_DK_Scheduler_Cancel = nullptr;
+    FnDK_Scheduler_Tick pfn_DK_Scheduler_Tick = nullptr;
+    FnDK_CpuSupportsAvx pfn_DK_CpuSupportsAvx = nullptr;
+
 
     FnDK_Preset_SetGodMode pfn_DK_Preset_SetGodMode = nullptr;
     FnDK_Preset_SetGhostMode pfn_DK_Preset_SetGhostMode = nullptr;
@@ -279,6 +390,8 @@ public:
     FnDK_Config_SetInt pfn_DK_Config_SetInt = nullptr;
     FnDK_Config_GetBool pfn_DK_Config_GetBool = nullptr;
     FnDK_Config_SetBool pfn_DK_Config_SetBool = nullptr;
+    FnDK_Config_GetString pfn_DK_Config_GetString = nullptr;
+    FnDK_Config_SetString pfn_DK_Config_SetString = nullptr;
 };
 
 // Clean C++ Helpers
@@ -289,12 +402,18 @@ inline void Log(int level, const char* msg) {
     }
 }
 
-
-inline void ShowToast(const std::string& message, float durationSec = 2.0f, uint32_t colorRgb = 0x00FF88) {
-    auto pfn = PluginHost::Instance().pfn_DK_ShowToast;
-    if (pfn) pfn(message.c_str(), durationSec, colorRgb);
-}
-
+
+
+inline void ShowToast(const std::string& message, float durationSec = 2.0f, uint32_t colorRgb = 0x00FF88) {
+
+    auto pfn = PluginHost::Instance().pfn_DK_ShowToast;
+
+    if (pfn) pfn(message.c_str(), durationSec, colorRgb);
+
+}
+
+
+
 inline void LogInfo(const char* fmt, ...) {
     char buf[1024];
     va_list args;

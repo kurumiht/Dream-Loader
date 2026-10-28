@@ -4,6 +4,32 @@ All notable changes to the **dreamkurumiHT** Native Harmony Modding Framework wi
 
 ---
 
+## [v3.8.0] - 2026-10-28
+
+### 🚀 Highlights (จุดเด่นสำคัญในเวอร์ชั่นนี้)
+- **Dynamic Stack Unwinding & Segregated Trampoline Pool (`DreamUnwind.hpp` & `DreamPool.hpp`):**
+  - Segregated trampoline arena chunks into `ChunkKind::InlineLeaf` and `ChunkKind::MidHookFramed`.
+  - Leaf trampolines use pure RSP-relative leaf execution with zero dynamic function table overhead.
+  - MidHook stubs register dedicated `RUNTIME_FUNCTION` entries with 8-byte `MinimalUnwindInfo` (`UWOP_SET_FPREG` for `RBP` frame pointer), guaranteeing 100% compliant Windows x64 SEH callstack unwinding without table delete-readd race windows.
+- **Zero-Stutter Multi-Threaded Hot-Patching (`DreamPatcher.hpp`):**
+  - Lock-free 8-byte atomic compare-and-swap (`TryAtomicFiveBytePatch` via `_InterlockedCompareExchange64`) for instant 5-byte JMP patches without freezing threads.
+  - High-performance thread freeze fallback (`FastProcessThreadFreeze` using dynamic `NtGetNextThread`, ~18 µs total suspension overhead) bypassing heavy `CreateToolhelp32Snapshot` heap overhead.
+- **Overlay Hook Chaining (`DreamRelocator.hpp`):**
+  - 14-byte 64-bit absolute indirect detour jumps (`FF 25` / `EmitAbsoluteJump64`).
+  - Seamlessly chains existing third-party hooks (`TryChainExistingOverlayHook`) for Steam Overlay (`GameOverlayRenderer64.dll`), Discord, and OBS without hook stomping or infinite cycles.
+- **Job Worker Fiber Guard (`DreamFiberGuard.hpp`):**
+  - `ScopedFiberTebGuard` equipped with a 64-entry lock-free direct-mapped L1 cache (`((rsp >> 16) ^ (rsp >> 22)) & 63`) using 64-bit relaxed atomics (~2 ns latency).
+  - Eliminates repetitive `VirtualQuery` syscall overhead on Keen Games voxel worker fibers and completely prevents `STATUS_BAD_STACK (0xC0000028)` during SEH unwinds on custom fiber stacks.
+- **Vulkan 1.3 Swapchain ABA Guard (`DreamVulkanTracker.hpp`):**
+  - Tracks Vulkan swapchain lifecycle across dynamic resizes and DLSS 3 / FSR 3 dynamic recreations.
+  - Hooks `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, and `vkQueuePresentKHR`, automatically injecting `VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT` for overlay rendering and maintaining monotonic `generation` ABA protection.
+- **Expanded Test Suite (65/65 Passing):**
+  - Comprehensive unit test coverage covering AVX2 scanner, fiber TEB bounds cache, atomic 8-byte patching, swapchain generation tracking, and SEH frame unwinding.
+- **First-Party Production Mod Included (`mods/Dream-AoE-Harvest`):**
+  - Bundled modular C++20 `Dream-AoE-Harvest` plugin (3.5m radius farming crop harvesting mod with universal access).
+
+---
+
 ## [v1.0.2] - 2026-10-17
 
 ### 🚀 Highlights (จุดเด่นสำคัญในเวอร์ชั่นนี้)

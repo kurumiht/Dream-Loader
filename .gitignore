@@ -24,3 +24,16 @@ Release/
 *.bak
 .vs/
 .vscode/
+
+# Test generated artifacts
+tests/test_rtti_candidates.json
+tests/test_rtti_classes.tsv
+tests/test_trace.jsonl
+tests/test_mods_store/
+
+# Whitelist mod configurations
+!mods/**/config.ini
+!mods/**/native-plugin.ini
+!mods/**/config.toml
+!template/config.ini
+!template/native-plugin.ini

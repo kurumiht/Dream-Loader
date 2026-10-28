@@ -29,6 +29,20 @@ public:
         return result;
     }
 
+    // Torn-read detection for non-atomic concurrent reads (e.g. 4x4 View-Projection matrix <= 64 bytes)
+    // Ensures two identical consecutive reads without torn values from background writer threads.
+    static bool ReadStable(const void* src, void* dst, size_t n /* <= 64 */) {
+        if (!src || !dst || n == 0 || n > 64) return false;
+        if (!MemoryHelper::IsValidPtr(src)) return false;
+        alignas(16) char tmp[64];
+        for (int i = 0; i < 3; ++i) {
+            std::memcpy(dst, src, n);
+            std::memcpy(tmp, src, n);
+            if (!std::memcmp(dst, tmp, n)) return true; // Two identical reads: consistent & not torn
+        }
+        return false; // Caller keeps last known good snapshot
+    }
+
     // Safe memory writing with automatic VirtualProtect (PAGE_EXECUTE_READWRITE)
     template <typename T>
     static bool Write(void* address, const T& value) {

@@ -1,0 +1,35 @@
+# ==============================================================================
+# Dream AoE Harvest - Dedicated Farming Crop Harvesting Mod
+# ระบบเก็บเกี่ยวพืชผลแบบกลุ่มรอบแปลงเพาะปลูก (Crop Harvesting Mod)
+# ภาษา: ไทย / English (Bilingual Documentation) | Hot-Reload Enabled
+# ==============================================================================
+
+[AoEHarvest]
+# เปิด/ปิด ระบบเก็บเกี่ยวพืชผลแบบกลุ่มรอบตัว (True = เปิดใช้งาน, False = ปิด)
+# Master toggle for Area-of-Effect crop harvesting (True = Enabled, False = Disabled)
+Enabled = true
+
+# รัศมีการเก็บเกี่ยวพืชผลรอบแปลงเพาะปลูก (หน่วยเป็นเมตร: ค่าเริ่มต้น 3.5m)
+# Harvesting search radius around targeted crop in meters (Default: 3.5m)
+Radius = 3.5
+
+# เก็บเกี่ยวเฉพาะพืชชนิดเดียวกันที่กด (True) หรือเก็บเกี่ยวพืชทุกชนิดที่โตเต็มที่รอบๆ (False)
+# If true, only harvests matching plant species; if false, harvests all ripe plants within radius
+SameCropOnly = false
+
+# หากกดปุ่ม Shift ค้างไว้ขณะเก็บเกี่ยว จะเป็นการเก็บเดี่ยวแบบดั้งเดิม (Vanilla) ทีละต้น
+# Hold Shift while interacting to collect single vanilla crop without AoE
+AllowShiftVanilla = true
+
+# สิทธิ์การใช้งาน: ค่าเริ่มต้น false เพื่อให้ผู้เล่นทุกคนบนเซิร์ฟเวอร์สามารถใช้งานได้
+# Admin-only policy: Default false so ALL players on the dedicated server can use AoE harvest
+AdminOnly = false
+
+[Hotkeys]
+# ปุ่มคีย์ลัดสำหรับเปิด/ปิด ระบบ AoE Harvest (0x77 = F8, 0 = ปิดการใช้งานปุ่ม)
+# Keyboard hotkey to toggle AoE harvest on/off (0x77 = F8, 0 = Disabled)
+ToggleHotkey = 0x77
+
+# ส่งเสียงสัญญาณเตือนสั้นๆ (Audio Beep) เมื่อกดเปิดหรือปิดผ่านปุ่มคีย์ลัด
+# Play audio confirmation sound when toggled via hotkey
+AudioFeedback = true

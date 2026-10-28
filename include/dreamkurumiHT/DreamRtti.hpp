@@ -123,12 +123,16 @@ public:
     // Find class VTable pointer dynamically by demangled or partial class name
     // e.g., FindVTable("keen::ecs::EntityManager") or FindVTable("EntityManager")
     static void** FindVTable(const std::string& className, HMODULE hModule = nullptr) {
-        // 1. Check synthetic registry first
+        // 1. Check synthetic registry and cached VTables first (O(1) fast-path)
         {
             std::lock_guard<std::mutex> lock(Instance().m_mutex);
-            auto it = Instance().m_syntheticVtables.find(className);
-            if (it != Instance().m_syntheticVtables.end()) {
-                return it->second;
+            auto itSynth = Instance().m_syntheticVtables.find(className);
+            if (itSynth != Instance().m_syntheticVtables.end()) {
+                return itSynth->second;
+            }
+            auto itCache = Instance().m_vtableCache.find(className);
+            if (itCache != Instance().m_vtableCache.end()) {
+                return itCache->second;
             }
         }
 
@@ -201,14 +205,18 @@ public:
 
         int32_t targetTdRva = static_cast<int32_t>(typeDescriptorAddr - reinterpret_cast<uintptr_t>(base));
 
-        // 4. Search .rdata for MSVC_RTTICompleteObjectLocator
+        // 4. Search .rdata for MSVC_RTTICompleteObjectLocator with pSelf RVA verification
         uintptr_t locatorAddr = 0;
         for (size_t offset = 0; offset <= rdataSize - sizeof(MSVC_RTTICompleteObjectLocator); offset += 4) {
             auto loc = reinterpret_cast<MSVC_RTTICompleteObjectLocator*>(rdataStart + offset);
             if (loc->signature == 1 && loc->offset == 0 && loc->typeDescriptorRva == targetTdRva) {
-                locatorAddr = reinterpret_cast<uintptr_t>(loc);
-                DREAM_LOG_INFO("DreamRtti: Found RTTICompleteObjectLocator at 0x%p", loc);
-                break;
+                // High precision filter: on 64-bit MSVC, objectBaseRva / pSelf must match COL RVA or 0
+                uint32_t colRva = static_cast<uint32_t>((rdataStart + offset) - base);
+                if (loc->objectBaseRva == colRva || loc->objectBaseRva == 0) {
+                    locatorAddr = reinterpret_cast<uintptr_t>(loc);
+                    DREAM_LOG_INFO("DreamRtti: Found RTTICompleteObjectLocator at 0x%p (pSelf RVA: 0x%x)", loc, colRva);
+                    break;
+                }
             }
         }
 
@@ -224,6 +232,12 @@ public:
             if (*ptr == locatorAddr) {
                 void** vtable = reinterpret_cast<void**>(ptr + 1);
                 DREAM_LOG_INFO("DreamRtti: Resolved VTable for class '%s' at 0x%p", className.c_str(), vtable);
+                
+                // Cache resolved VTable for O(1) instant subsequent lookups
+                {
+                    std::lock_guard<std::mutex> lock(Instance().m_mutex);
+                    Instance().m_vtableCache[className] = vtable;
+                }
                 return vtable;
             }
         }
@@ -243,6 +257,7 @@ private:
 
     std::mutex m_mutex;
     std::unordered_map<std::string, void**> m_syntheticVtables;
+    std::unordered_map<std::string, void**> m_vtableCache;
 };
 
 } // namespace dreamkurumi

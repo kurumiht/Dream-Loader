@@ -111,6 +111,7 @@ private:
 
         if (!hWnd) {
             DREAM_LOG_WARN("DreamToast: Failed to create overlay window (Error: %lu)", GetLastError());
+            m_running.store(false);
             return;
         }
 

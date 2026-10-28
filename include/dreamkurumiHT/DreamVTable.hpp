@@ -86,4 +86,82 @@ private:
     std::unordered_map<size_t, void*> m_originalEntries;
 };
 
+
+// ============================================================================
+// DreamShadowVTable (Shadow VMT Swap / Per-Instance Virtual Table Hooking)
+// Creates an isolated copy of the virtual method table for a single object
+// without touching read-only .rdata pages or affecting other instances!
+// ============================================================================
+class DreamShadowVTable {
+public:
+    DreamShadowVTable() = default;
+    explicit DreamShadowVTable(void* instance, size_t methodCount = 64) {
+        Initialize(instance, methodCount);
+    }
+    ~DreamShadowVTable() {
+        UnhookAll();
+    }
+
+    bool Initialize(void* instance, size_t methodCount = 64) {
+        if (!instance) return false;
+        m_instance = instance;
+        m_originalVtable = *reinterpret_cast<void***>(m_instance);
+        if (!m_originalVtable) return false;
+
+        m_methodCount = methodCount;
+        m_shadowVtable.resize(m_methodCount);
+        for (size_t i = 0; i < m_methodCount; ++i) {
+            m_shadowVtable[i] = m_originalVtable[i];
+        }
+
+        // Swap instance vptr to point to shadow vtable
+        *reinterpret_cast<void***>(m_instance) = m_shadowVtable.data();
+        m_isHooked = true;
+        DREAM_LOG_INFO("DreamShadowVTable: Swapped instance 0x%p to shadow VMT (size %zu)", m_instance, m_methodCount);
+        return true;
+    }
+
+    bool Hook(size_t index, void* detour, void** ppOriginal = nullptr) {
+        if (!m_isHooked || index >= m_methodCount || !detour) return false;
+
+        if (ppOriginal) {
+            *ppOriginal = m_originalVtable[index];
+        }
+
+        m_shadowVtable[index] = detour;
+        DREAM_LOG_INFO("DreamShadowVTable: Hooked method index %zu to 0x%p", index, detour);
+        return true;
+    }
+
+    bool Unhook(size_t index) {
+        if (!m_isHooked || index >= m_methodCount) return false;
+        m_shadowVtable[index] = m_originalVtable[index];
+        return true;
+    }
+
+    void UnhookAll() {
+        if (m_isHooked && m_instance && m_originalVtable) {
+            *reinterpret_cast<void***>(m_instance) = m_originalVtable;
+            m_isHooked = false;
+            DREAM_LOG_INFO("DreamShadowVTable: Restored original VMT for instance 0x%p", m_instance);
+        }
+    }
+
+    void* GetOriginal(size_t index) const {
+        if (index < m_methodCount && m_originalVtable) {
+            return m_originalVtable[index];
+        }
+        return nullptr;
+    }
+
+    bool IsHooked() const { return m_isHooked; }
+
+private:
+    void* m_instance{nullptr};
+    void** m_originalVtable{nullptr};
+    std::vector<void*> m_shadowVtable;
+    size_t m_methodCount{0};
+    bool m_isHooked{false};
+};
+
 } // namespace dreamkurumi

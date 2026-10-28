@@ -240,7 +240,11 @@ public:
         if (!m_watcherRunning.load()) return;
         m_watcherRunning.store(false);
         if (m_watcherThread.joinable()) {
-            m_watcherThread.join();
+            if (m_watcherThread.get_id() != std::this_thread::get_id()) {
+                m_watcherThread.join();
+            } else {
+                m_watcherThread.detach();
+            }
         }
         DREAM_LOG_INFO("DreamOverlay: Background hotkey watcher stopped");
     }
@@ -1228,9 +1232,12 @@ public:
 
     void StartConsoleInputListener() {
         if (m_consoleListenerRunning.load()) return;
+        if (DreamServerGuard::IsDedicatedServer() || GetConsoleWindow() == NULL) {
+            return;
+        }
+
         m_consoleListenerRunning.store(true);
         m_consoleListenerThread = std::thread([this]() {
-            // 1. Enable UTF-8 and ANSI colors in console terminal
             HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
             if (hOut != INVALID_HANDLE_VALUE && hOut != NULL) {
                 DWORD dwMode = 0;
@@ -1241,14 +1248,31 @@ public:
             SetConsoleOutputCP(CP_UTF8);
             SetConsoleCP(CP_UTF8);
 
-            // 2. Re-bind stdin to physical console input (CONIN$) to ensure reliability on Windows
-            FILE* fpIn = nullptr;
-            freopen_s(&fpIn, "CONIN$", "r", stdin);
+            HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+            if (hIn == INVALID_HANDLE_VALUE || hIn == NULL) {
+                m_consoleListenerRunning.store(false);
+                return;
+            }
 
             printf("\n\033[96mdream\033[0m> ");
             fflush(stdout);
 
             while (m_consoleListenerRunning.load()) {
+                DWORD fileType = GetFileType(hIn);
+                if (fileType == FILE_TYPE_PIPE) {
+                    DWORD bytesAvail = 0;
+                    if (!PeekNamedPipe(hIn, NULL, 0, NULL, &bytesAvail, NULL) || bytesAvail == 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                        continue;
+                    }
+                } else if (fileType == FILE_TYPE_CHAR) {
+                    DWORD numEvents = 0;
+                    if (!GetNumberOfConsoleInputEvents(hIn, &numEvents) || numEvents == 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                        continue;
+                    }
+                }
+
                 std::string line;
                 if (std::getline(std::cin, line)) {
                     while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) {
@@ -1257,11 +1281,13 @@ public:
                     if (!line.empty()) {
                         ExecuteCommand(line);
                     }
-                    printf("\033[96mdream\033[0m> ");
-                    fflush(stdout);
+                    if (m_consoleListenerRunning.load()) {
+                        printf("\033[96mdream\033[0m> ");
+                        fflush(stdout);
+                    }
                 } else {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
                     std::cin.clear();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(150));
                 }
             }
         });
@@ -1272,7 +1298,11 @@ public:
         if (!m_consoleListenerRunning.load()) return;
         m_consoleListenerRunning.store(false);
         if (m_consoleListenerThread.joinable()) {
-            m_consoleListenerThread.detach();
+            if (m_consoleListenerThread.get_id() != std::this_thread::get_id()) {
+                m_consoleListenerThread.join();
+            } else {
+                m_consoleListenerThread.detach();
+            }
         }
     }
 

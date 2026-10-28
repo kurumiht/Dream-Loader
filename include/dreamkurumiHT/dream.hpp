@@ -25,6 +25,7 @@
 #include <type_traits>
 #include <cstdio>
 #include <cstring>
+#include <dreamkurumiHT/dreamkurumiHT.hpp>
 
 // ----------------------------------------------------------------------------
 // XHL Native Plugin Host ABI Definitions
@@ -192,15 +193,30 @@ namespace Config {
         if constexpr (std::is_same_v<T, bool>) {
             using Fn = bool (*)(const char*, bool);
             static auto pfn = detail::EngineBridge::Instance().GetProc<Fn>("DK_Config_GetBool");
-            return pfn ? pfn(key.c_str(), defaultVal) : defaultVal;
+            if (pfn) return pfn(key.c_str(), defaultVal);
+            return ::dreamkurumi::DreamLiveConfig::Instance().GetBool(key, defaultVal);
         } else if constexpr (std::is_integral_v<T>) {
             using Fn = int (*)(const char*, int);
             static auto pfn = detail::EngineBridge::Instance().GetProc<Fn>("DK_Config_GetInt");
-            return pfn ? static_cast<T>(pfn(key.c_str(), static_cast<int>(defaultVal))) : defaultVal;
+            if (pfn) return static_cast<T>(pfn(key.c_str(), static_cast<int>(defaultVal)));
+            return static_cast<T>(::dreamkurumi::DreamLiveConfig::Instance().GetInt(key, static_cast<int>(defaultVal)));
         } else if constexpr (std::is_floating_point_v<T>) {
             using Fn = float (*)(const char*, float);
             static auto pfn = detail::EngineBridge::Instance().GetProc<Fn>("DK_Config_GetFloat");
-            return pfn ? static_cast<T>(pfn(key.c_str(), static_cast<float>(defaultVal))) : defaultVal;
+            if (pfn) return static_cast<T>(pfn(key.c_str(), static_cast<float>(defaultVal)));
+            return static_cast<T>(::dreamkurumi::DreamLiveConfig::Instance().GetFloat(key, static_cast<float>(defaultVal)));
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            using Fn = bool (*)(const char*, char*, uint32_t, const char*);
+            static auto pfn = detail::EngineBridge::Instance().GetProc<Fn>("DK_Config_GetString");
+            if (pfn) {
+                char buf[512] = {0};
+                if (pfn(key.c_str(), buf, sizeof(buf), defaultVal.c_str())) {
+                    return std::string(buf);
+                }
+            }
+            std::string directVal = ::dreamkurumi::DreamLiveConfig::Instance().Get(key);
+            if (!directVal.empty()) return directVal;
+            return defaultVal;
         }
         return defaultVal;
     }
@@ -220,7 +236,6 @@ inline bool ExecuteSafely(const char* taskName, void (*callback)(void*), void* u
 // ----------------------------------------------------------------------------
 // Declarative Harmony Patch Macros
 // ----------------------------------------------------------------------------
-#include <dreamkurumiHT/dreamkurumiHT.hpp>
 
 #define DREAM_PATCH(PatchClass, SymbolNameStr, RetType, ...) \
     DREAM_HARMONY_PATCH(PatchClass, SymbolNameStr, 0, RetType, __VA_ARGS__)

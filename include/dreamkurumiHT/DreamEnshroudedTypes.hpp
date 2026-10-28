@@ -64,23 +64,40 @@ inline int64_t MetersToFixed(double meters) {
 
 // Component IDs
 namespace ComponentIds {
-    inline constexpr uint16_t SpatialTransform = 0x7D;      // 125 (Fixed-point X/Y/Z)
-    inline constexpr uint16_t InteractionOffer = 0x105;     // 261 (Offer acceptance)
-    inline constexpr uint16_t PickupItem       = 0x146;     // 326 (Pickup property)
-    inline constexpr uint16_t DestroyOnLoot    = 0x147;     // 327
-    inline constexpr uint16_t Inventory        = 0x174;     // 372
-    inline constexpr uint16_t DefaultInventory = 0x17E;     // 382
+    inline constexpr uint16_t SpatialTransform            = 0x7D;   // 125 (Fixed-point X/Y/Z)
+    inline constexpr uint16_t InteractionOffer            = 0x105;  // 261 (Offer acceptance)
+    inline constexpr uint16_t PickupItem                  = 0x146;  // 326 (Pickup property)
+    inline constexpr uint16_t DestroyOnLoot               = 0x147;  // 327
+    inline constexpr uint16_t AreaLootOverride            = 0x148;  // 328 (1.0+ Vacuum loot candidate)
+    inline constexpr uint16_t DisableColliderModeChanges  = 0x149;  // 329 (1.0+ Loot-all target marker)
+    inline constexpr uint16_t PickupItemZone              = 0x14A;  // 330
+    inline constexpr uint16_t TriggerShape                = 0x14B;  // 331
+    inline constexpr uint16_t IsPlayerInRange             = 0x14C;  // 332
+    inline constexpr uint16_t Inventory                   = 0x174;  // 372
+    inline constexpr uint16_t RandomLoot                  = 0x175;  // 373 (Chests, world containers)
+    inline constexpr uint16_t DefaultInventory            = 0x17E;  // 382
+    inline constexpr uint16_t ResourceNodePickupDrops     = 0x17F;  // 383 (Trees, ores, breakables)
 }
 
 // Archetype Bitmask Filters
 namespace ArchetypeBits {
     // Word 4 (+0x20 in Archetype)
-    inline constexpr uint64_t HasInteractionOffer = (1ULL << 5);   // Component 0x105
-    inline constexpr uint64_t HasInventory        = (1ULL << 52);  // Component 0x174
-    inline constexpr uint64_t HasDefaultInventory = (1ULL << 62);  // Component 0x17E
+    inline constexpr uint64_t HasInteractionOffer           = (1ULL << 5);   // Component 0x105
+    inline constexpr uint64_t HasInventory                  = (1ULL << 52);  // Component 0x174
+    inline constexpr uint64_t HasDefaultInventory           = (1ULL << 62);  // Component 0x17E
 
     // Word 5 (+0x28 in Archetype)
-    inline constexpr uint64_t DestroyOnLootMask   = (0x7ULL << 9); // Bits 9, 10, 11
+    inline constexpr uint64_t DestroyOnLootMask             = (0x7ULL << 9); // Bits 9, 10, 11 (Component 0x147)
+    inline constexpr uint64_t HasAreaLootOverride           = (1ULL << 12);  // Component 0x148
+    inline constexpr uint64_t HasDisableColliderModeChanges = (1ULL << 13);  // Component 0x149
+}
+
+// Fast In-Memory Classification Helpers
+inline bool IsAreaLootCandidateArchetype(const void* pArch) {
+    if (!pArch) return false;
+    const uint64_t* compWords = reinterpret_cast<const uint64_t*>(reinterpret_cast<const char*>(pArch) + 0x20);
+    uint64_t word5 = compWords[1]; // +0x28
+    return (word5 & (ArchetypeBits::HasAreaLootOverride | ArchetypeBits::HasDisableColliderModeChanges)) != 0;
 }
 
 // Fast In-Memory Classification Helpers

@@ -129,6 +129,17 @@ public:
         return SetBreakpoint(address, condition, size, callback);
     }
 
+    // Apply all active breakpoints to the calling thread (called on DLL_THREAD_ATTACH)
+    void ApplyToCurrentThread() {
+        DWORD tid = GetCurrentThreadId();
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (int slot = 0; slot < 4; ++slot) {
+            if (m_breakpoints[slot].active && m_breakpoints[slot].address) {
+                ApplyBreakpointToThread(tid, slot, m_breakpoints[slot].address, m_breakpoints[slot].condition, m_breakpoints[slot].size);
+            }
+        }
+    }
+
     // Manually synchronize active breakpoints to all currently running worker threads
     void SyncAllThreads() {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -153,32 +164,35 @@ private:
 
         // Hardware Breakpoint Interception
         if (code == EXCEPTION_SINGLE_STEP || code == STATUS_SINGLE_STEP) {
-            pExceptionInfo->ContextRecord->ContextFlags |= (CONTEXT_FULL | CONTEXT_FLOATING_POINT | CONTEXT_DEBUG_REGISTERS);
             auto& inst = DreamVeh::Instance();
             DWORD64 dr6 = pExceptionInfo->ContextRecord->Dr6;
 
-            int triggeredSlot = -1;
+            bool handled = false;
             for (int i = 0; i < 4; ++i) {
-                if ((dr6 & (1ULL << i)) || (pExceptionInfo->ContextRecord->Rip == reinterpret_cast<DWORD64>(inst.m_breakpoints[i].address))) {
-                    if (inst.m_breakpoints[i].active) {
-                        triggeredSlot = i;
-                        break;
+                if (!inst.m_breakpoints[i].active) continue;
+
+                bool hit = (dr6 & (1ULL << i)) != 0;
+                // Only for instruction execution breakpoints, allow RIP match as fallback
+                if (!hit && inst.m_breakpoints[i].condition == BreakOn::Execute) {
+                    hit = (pExceptionInfo->ContextRecord->Rip == reinterpret_cast<DWORD64>(inst.m_breakpoints[i].address));
+                }
+
+                if (hit) {
+                    auto& bp = inst.m_breakpoints[i];
+                    if (bp.callback) {
+                        DreamCpuContext ctx{};
+                        CopyFromWindowsContext(pExceptionInfo->ContextRecord, ctx);
+                        DreamCrashGuard::ExecuteSafely("VehBreakpoint", [&]() {
+                            bp.callback(ctx);
+                        });
+                        CopyToWindowsContext(ctx, pExceptionInfo->ContextRecord);
                     }
+                    handled = true;
                 }
             }
 
-            if (triggeredSlot != -1) {
-                auto& bp = inst.m_breakpoints[triggeredSlot];
-                if (bp.callback) {
-                    DreamCpuContext ctx{};
-                    CopyFromWindowsContext(pExceptionInfo->ContextRecord, ctx);
-                    DreamCrashGuard::ExecuteSafely("VehBreakpoint", [&]() {
-                        bp.callback(ctx);
-                    });
-                    CopyToWindowsContext(ctx, pExceptionInfo->ContextRecord);
-                }
-
-                // Resume Flag (RF) in EFLAGS so CPU executes instruction without re-triggering
+            if (handled) {
+                // Resume Flag (RF) in EFLAGS so CPU executes instruction without re-triggering for Execute breakpoints
                 pExceptionInfo->ContextRecord->EFlags |= 0x10000;
                 pExceptionInfo->ContextRecord->Dr6 = 0;
 

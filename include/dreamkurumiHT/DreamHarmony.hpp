@@ -196,8 +196,6 @@ public:
             return orig ? orig(args...) : Ret{};
         }
 
-        for (const auto& s : subs) {
-        }
         bool runOriginal = true;
         for (const auto& s : subs) {
             if (s.prefix) {

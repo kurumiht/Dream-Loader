@@ -208,7 +208,11 @@ public:
         if (!m_isRunning.load()) return;
         m_isRunning.store(false);
         if (m_monitorThread.joinable()) {
-            m_monitorThread.join();
+            if (m_monitorThread.get_id() != std::this_thread::get_id()) {
+                m_monitorThread.join();
+            } else {
+                m_monitorThread.detach();
+            }
         }
         DREAM_LOG_INFO("DreamWatchdog: Background monitor stopped");
     }

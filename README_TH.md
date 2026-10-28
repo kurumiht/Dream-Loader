@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **โมเดิร์นเนทีฟ Harmony Hooking & Modding Framework สำหรับ C++20 บน Windows x64**  
 > *(ไม่ต้องเขียน Assembly, ไม่ต้องสแกนแรม, ดักจับผ่าน Hardware Breakpoint VEH, ประสิทธิภาพสูงสุดสำหรับ Keen Games Engine)*  
-> **เวอร์ชันของ Framework:** `3.5.0` | **สถาปัตยกรรม:** Windows x64 | **เกมที่รองรับ:** Enshrouded 1.0+
+> **เวอร์ชันของ Framework:** `3.8.0` | **สถาปัตยกรรม:** Windows x64 | **เกมที่รองรับ:** Enshrouded 1.0+
 
 ---
 
@@ -9,8 +9,8 @@
   <b>สลับภาษา / Language Switcher:</b><br>
   <a href="README.md">🇬🇧 <b>English</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.5.0/Dream-Core-v3.5.0.zip">
-    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.5.0%20(Plug%20%26%20Play)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.5.0" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-Core-v3.8.0.zip">
+    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.8.0%20(Plug%20%26%20Play)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.8.0" />
   </a>
 </p>
 

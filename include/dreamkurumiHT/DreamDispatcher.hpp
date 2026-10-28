@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include <array>
+#include <utility>
 #include <functional>
 #include <algorithm>
 #include <mutex>
@@ -21,6 +23,7 @@ namespace dreamkurumi {
 // DreamCentralDispatcher - Multi-Mod Inline Hook Collision Resolver
 // Guarantees 100% crash-proof multi-mod hooking on the exact same game function.
 // Zero trampoline corruption, lock-free RCU fast path, priority ordering,
+// slot-based C++ dispatch stubs (zero register clobbering, zero asm hacks),
 // and seamless hot-reload unhooking without breaking other mods in the chain!
 // ============================================================================
 
@@ -28,6 +31,7 @@ template <typename Ret, typename... Args>
 class CentralDetourHandler {
 public:
     using TargetFn = Ret(*)(Args...);
+    using StubFn = Ret(*)(Args...);
     using PrefixFn = std::function<bool(Args&...)>;
     using PostfixFn = std::function<void(Ret&, Args&...)>;
 
@@ -43,6 +47,24 @@ public:
         std::vector<Subscriber> subscribers;
     };
 
+    template <size_t SlotIdx>
+    static Ret SlotDispatcherStub(Args... args) {
+        auto* pThis = s_slots[SlotIdx];
+        if (pThis) {
+            return pThis->Dispatch(args...);
+        }
+        return Ret{};
+    }
+
+    template <size_t... Is>
+    static constexpr auto MakeStubTable(std::index_sequence<Is...>) {
+        return std::array<StubFn, sizeof...(Is)>{ (&SlotDispatcherStub<Is>)... };
+    }
+
+    static inline constexpr auto s_stubs = MakeStubTable(std::make_index_sequence<64>{});
+    static inline CentralDetourHandler* s_slots[64] = {nullptr};
+    static inline std::mutex s_slotMutex;
+
     explicit CentralDetourHandler(void* target)
         : m_target(target) {
         m_snapshot = std::make_shared<Snapshot>();
@@ -50,34 +72,38 @@ public:
 
     ~CentralDetourHandler() {
         m_hook.Disable();
+        if (m_slotIndex >= 0 && m_slotIndex < 64) {
+            std::lock_guard<std::mutex> lock(s_slotMutex);
+            s_slots[m_slotIndex] = nullptr;
+            m_slotIndex = -1;
+        }
     }
 
     bool EnsureInstalled() {
         if (m_hook.IsInstalled()) return true;
 
-        uint8_t* stub = reinterpret_cast<uint8_t*>(DreamTrampolinePool::Instance().Allocate(m_target, 32));
-        if (stub) {
-            stub[0] = 0x48; stub[1] = 0xBB;
-            *reinterpret_cast<uint64_t*>(stub + 2) = reinterpret_cast<uint64_t>(this);
-            stub[10] = 0x48; stub[11] = 0xB8;
-            *reinterpret_cast<uint64_t*>(stub + 12) = reinterpret_cast<uint64_t>(MasterDispatcherStub);
-            stub[20] = 0xFF; stub[21] = 0xE0;
-            MemoryHelper::FlushCache(stub, 32);
-            m_pDynamicStub = stub;
-            s_pActiveThis = this;
-            bool ok = m_hook.Install(m_target, stub);
-            if (ok) {
-                DREAM_LOG_INFO("DreamCentralDispatcher: Master Detour installed at 0x%p (Dynamic Stub: 0x%p)", m_target, stub);
+        if (m_slotIndex < 0) {
+            std::lock_guard<std::mutex> lock(s_slotMutex);
+            for (int i = 0; i < 64; ++i) {
+                if (s_slots[i] == nullptr) {
+                    s_slots[i] = this;
+                    m_slotIndex = i;
+                    break;
+                }
             }
-            return ok;
-        } else {
-            s_pActiveThis = this;
-            bool ok = m_hook.Install(m_target, reinterpret_cast<void*>(MasterDispatcherStub));
-            if (ok) {
-                DREAM_LOG_INFO("DreamCentralDispatcher: Master Detour installed at 0x%p (Static Stub)", m_target);
-            }
-            return ok;
         }
+
+        if (m_slotIndex < 0) {
+            DREAM_LOG_ERROR("DreamCentralDispatcher: Exceeded maximum 64 active hooks for this signature");
+            return false;
+        }
+
+        void* stubTarget = reinterpret_cast<void*>(s_stubs[m_slotIndex]);
+        bool ok = m_hook.Install(m_target, stubTarget);
+        if (ok) {
+            DREAM_LOG_INFO("DreamCentralDispatcher: Master Detour installed at 0x%p (Slot %d)", m_target, m_slotIndex);
+        }
+        return ok;
     }
 
     void AddSubscriber(const std::string& modId, HookPriority priority, void* ownerKey, PrefixFn pfx, PostfixFn pfxPost) {
@@ -137,17 +163,6 @@ private:
         m_snapshot.store(next);
     }
 
-    static Ret MasterDispatcherStub(Args... args) {
-        CentralDetourHandler* pThis = nullptr;
-#if defined(__GNUC__) || defined(__clang__)
-        register void* r11val asm("r11");
-        pThis = reinterpret_cast<CentralDetourHandler*>(r11val);
-#endif
-        if (!pThis) pThis = s_pActiveThis;
-        if (!pThis) return Ret{};
-        return pThis->Dispatch(args...);
-    }
-
     Ret Dispatch(Args... args) {
         std::shared_ptr<const Snapshot> snap = m_snapshot.load();
         auto orig = reinterpret_cast<TargetFn>(m_hook.GetOriginal());
@@ -186,10 +201,8 @@ private:
         return result;
     }
 
-    inline static CentralDetourHandler* s_pActiveThis{nullptr};
-
     void* m_target{nullptr};
-    uint8_t* m_pDynamicStub{nullptr};
+    int m_slotIndex{-1};
     DreamInlineHook m_hook;
     std::vector<Subscriber> m_subscribers;
     std::atomic<std::shared_ptr<const Snapshot>> m_snapshot;
@@ -203,6 +216,7 @@ template <typename... Args>
 class CentralDetourHandler<void, Args...> {
 public:
     using TargetFn = void(*)(Args...);
+    using StubFn = void(*)(Args...);
     using PrefixFn = std::function<bool(Args&...)>;
     using PostfixFn = std::function<void(Args&...)>;
 
@@ -218,6 +232,23 @@ public:
         std::vector<Subscriber> subscribers;
     };
 
+    template <size_t SlotIdx>
+    static void SlotDispatcherStub(Args... args) {
+        auto* pThis = s_slots[SlotIdx];
+        if (pThis) {
+            pThis->Dispatch(args...);
+        }
+    }
+
+    template <size_t... Is>
+    static constexpr auto MakeStubTable(std::index_sequence<Is...>) {
+        return std::array<StubFn, sizeof...(Is)>{ (&SlotDispatcherStub<Is>)... };
+    }
+
+    static inline constexpr auto s_stubs = MakeStubTable(std::make_index_sequence<64>{});
+    static inline CentralDetourHandler* s_slots[64] = {nullptr};
+    static inline std::mutex s_slotMutex;
+
     explicit CentralDetourHandler(void* target)
         : m_target(target) {
         m_snapshot = std::make_shared<Snapshot>();
@@ -225,34 +256,38 @@ public:
 
     ~CentralDetourHandler() {
         m_hook.Disable();
+        if (m_slotIndex >= 0 && m_slotIndex < 64) {
+            std::lock_guard<std::mutex> lock(s_slotMutex);
+            s_slots[m_slotIndex] = nullptr;
+            m_slotIndex = -1;
+        }
     }
 
     bool EnsureInstalled() {
         if (m_hook.IsInstalled()) return true;
 
-        uint8_t* stub = reinterpret_cast<uint8_t*>(DreamTrampolinePool::Instance().Allocate(m_target, 32));
-        if (stub) {
-            stub[0] = 0x48; stub[1] = 0xBB;
-            *reinterpret_cast<uint64_t*>(stub + 2) = reinterpret_cast<uint64_t>(this);
-            stub[10] = 0x48; stub[11] = 0xB8;
-            *reinterpret_cast<uint64_t*>(stub + 12) = reinterpret_cast<uint64_t>(MasterDispatcherStub);
-            stub[20] = 0xFF; stub[21] = 0xE0;
-            MemoryHelper::FlushCache(stub, 32);
-            m_pDynamicStub = stub;
-            s_pActiveThis = this;
-            bool ok = m_hook.Install(m_target, stub);
-            if (ok) {
-                DREAM_LOG_INFO("DreamCentralDispatcher: Master Detour installed at 0x%p (Dynamic Stub: 0x%p)", m_target, stub);
+        if (m_slotIndex < 0) {
+            std::lock_guard<std::mutex> lock(s_slotMutex);
+            for (int i = 0; i < 64; ++i) {
+                if (s_slots[i] == nullptr) {
+                    s_slots[i] = this;
+                    m_slotIndex = i;
+                    break;
+                }
             }
-            return ok;
-        } else {
-            s_pActiveThis = this;
-            bool ok = m_hook.Install(m_target, reinterpret_cast<void*>(MasterDispatcherStub));
-            if (ok) {
-                DREAM_LOG_INFO("DreamCentralDispatcher: Master Detour installed at 0x%p (Static Stub)", m_target);
-            }
-            return ok;
         }
+
+        if (m_slotIndex < 0) {
+            DREAM_LOG_ERROR("DreamCentralDispatcher: Exceeded maximum 64 active hooks for this signature");
+            return false;
+        }
+
+        void* stubTarget = reinterpret_cast<void*>(s_stubs[m_slotIndex]);
+        bool ok = m_hook.Install(m_target, stubTarget);
+        if (ok) {
+            DREAM_LOG_INFO("DreamCentralDispatcher: Master Detour installed at 0x%p (Slot %d)", m_target, m_slotIndex);
+        }
+        return ok;
     }
 
     void AddSubscriber(const std::string& modId, HookPriority priority, void* ownerKey, PrefixFn pfx, PostfixFn pfxPost) {
@@ -284,7 +319,7 @@ public:
             m_subscribers.erase(it, m_subscribers.end());
             SortAndRebuildSnapshot();
             DREAM_LOG_INFO("DreamCentralDispatcher: Unregistered mod '%s' from 0x%p (Remaining subscribers: %zu)",
-                           removedMod.c_str(), m_target, m_subscribers.size());
+                            removedMod.c_str(), m_target, m_subscribers.size());
         }
     }
 
@@ -309,16 +344,6 @@ private:
         auto next = std::make_shared<Snapshot>();
         next->subscribers = m_subscribers;
         m_snapshot.store(next);
-    }
-
-    static void MasterDispatcherStub(Args... args) {
-        CentralDetourHandler* pThis = nullptr;
-#if defined(__GNUC__) || defined(__clang__)
-        register void* r11val asm("r11");
-        pThis = reinterpret_cast<CentralDetourHandler*>(r11val);
-#endif
-        if (!pThis) pThis = s_pActiveThis;
-        if (pThis) pThis->Dispatch(args...);
     }
 
     void Dispatch(Args... args) {
@@ -357,10 +382,8 @@ private:
         }
     }
 
-    inline static CentralDetourHandler* s_pActiveThis{nullptr};
-
     void* m_target{nullptr};
-    uint8_t* m_pDynamicStub{nullptr};
+    int m_slotIndex{-1};
     DreamInlineHook m_hook;
     std::vector<Subscriber> m_subscribers;
     std::atomic<std::shared_ptr<const Snapshot>> m_snapshot;

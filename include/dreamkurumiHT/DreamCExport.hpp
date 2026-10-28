@@ -519,6 +519,20 @@ DK_API void DK_Config_BindString(const char* section, const char* key, const cha
     }
 }
 
+DK_API bool DK_Config_GetString(const char* fullKey, char* outBuffer, uint32_t outSize, const char* fallback) {
+    if (!fullKey || !outBuffer || outSize == 0) return false;
+    std::string val = dreamkurumi::DreamLiveConfig::Instance().Get(fullKey);
+    if (val.empty() && fallback) val = fallback;
+    strncpy_s(outBuffer, outSize, val.c_str(), _TRUNCATE);
+    return true;
+}
+
+DK_API void DK_Config_SetString(const char* fullKey, const char* val) {
+    if (fullKey && val) {
+        dreamkurumi::DreamLiveConfig::Instance().Set(fullKey, val);
+    }
+}
+
 DK_API float DK_Config_GetFloat(const char* fullKey, float fallback) {
     return fullKey ? dreamkurumi::DreamLiveConfig::Instance().GetFloat(fullKey, fallback) : fallback;
 }
@@ -560,16 +574,105 @@ DK_API size_t DK_Harmony_PatchAll() {
 
 DK_API void DK_Harmony_UnpatchAll() {
     dreamkurumi::DreamHarmony::UnpatchAll();
-}
-
-// ============================================================================
-// In-Game Toast Notification OSD
-// ============================================================================
-DK_API void DK_ShowToast(const char* message, float durationSec, uint32_t colorRgb) {
-    if (message) {
-        dreamkurumi::DreamToast::Instance().Show(message, durationSec, colorRgb);
-    }
+}
+
+
+
+// ============================================================================
+
+// In-Game Toast Notification OSD
+
+// ============================================================================
+
+DK_API void DK_ShowToast(const char* message, float durationSec, uint32_t colorRgb) {
+
+    if (message) {
+
+        dreamkurumi::DreamToast::Instance().Show(message, durationSec, colorRgb);
+
+    }
+
+}
+
+
+// ============================================================================
+// Vulkan Explicit Layer & Loader Integration (v3.7.0+)
+// ============================================================================
+DK_API bool DK_Vulkan_ConfigureLayerEnvironment(const char* layerDirPath, const char* layerName) {
+    if (!layerDirPath || !layerName) return false;
+    return dreamkurumi::DreamVulkanLayer::ConfigureEnvironment(layerDirPath, layerName);
+}
+
+DK_API bool DK_Vulkan_GenerateLayerManifest(const char* jsonPath, const char* layerName, const char* dllPath, const char* description) {
+    if (!jsonPath || !layerName || !dllPath) return false;
+    return dreamkurumi::DreamVulkanLayer::GenerateManifest(jsonPath, layerName, dllPath, description ? description : "");
+}
+
+// ============================================================================
+// Multi-DLL Proxy Chain-Loader (v3.7.0+)
+// ============================================================================
+DK_API bool DK_ChainLoader_LoadChainedDll(const char* dllPath) {
+    if (!dllPath) return false;
+    return dreamkurumi::DreamChainLoader::Instance().ChainLoadDll(dllPath);
+}
+
+DK_API size_t DK_ChainLoader_ScanAndLoad(const char* iniPath) {
+    return dreamkurumi::DreamChainLoader::Instance().ScanAndLoadChainedModules(iniPath ? iniPath : "chain_loader.ini");
+}
+
+DK_API size_t DK_ChainLoader_GetCount() {
+    return dreamkurumi::DreamChainLoader::Instance().GetChainedCount();
+}
+
+// ============================================================================
+// Dynamic Asset & LocaTag Bridge (v3.7.0+)
+// ============================================================================
+DK_API bool DK_Asset_RegisterOverride(const char* resourceType, const char* resourceName, const void* data, size_t size, const char* originMod) {
+    if (!resourceType || !resourceName || !data || size == 0) return false;
+    return dreamkurumi::DreamAssetBridge::Instance().RegisterAssetOverride(resourceType, resourceName, data, size, originMod ? originMod : "mod");
+}
+
+DK_API bool DK_Asset_GetOverride(const char* resourceType, const char* resourceName, const void** outData, size_t* outSize) {
+    if (!resourceType || !resourceName || !outData || !outSize) return false;
+    return dreamkurumi::DreamAssetBridge::Instance().GetAssetOverride(resourceType, resourceName, outData, outSize);
+}
+
+DK_API bool DK_Asset_RegisterLocaTag(const char* tag, const char* utf8Text) {
+    if (!tag || !utf8Text) return false;
+    return dreamkurumi::DreamAssetBridge::Instance().RegisterLocaTag(tag, utf8Text);
+}
+
+DK_API void DK_Asset_ClearAll() {
+    dreamkurumi::DreamAssetBridge::Instance().ClearAll();
+}
+
+// ============================================================================
+// DreamScheduler & Extended SIMD/AVX2 Integration (v3.8.0-beta)
+// ============================================================================
+DK_API uint64_t DK_Scheduler_Enqueue(void (*fn)(void*), void* userData) {
+    if (!fn) return 0;
+    return dreamkurumi::DreamScheduler::Instance().Enqueue([fn, userData]() {
+        fn(userData);
+    });
+}
+
+DK_API uint64_t DK_Scheduler_RunAfter(uint32_t delayMs, void (*fn)(void*), void* userData) {
+    if (!fn) return 0;
+    return dreamkurumi::DreamScheduler::Instance().RunAfter(delayMs, [fn, userData]() {
+        fn(userData);
+    });
+}
+
+DK_API bool DK_Scheduler_Cancel(uint64_t taskId) {
+    return dreamkurumi::DreamScheduler::Instance().Cancel(taskId);
+}
+
+DK_API size_t DK_Scheduler_Tick(double maxTimeBudgetMs) {
+    return dreamkurumi::DreamScheduler::Instance().Tick(maxTimeBudgetMs);
+}
+
+DK_API bool DK_CpuSupportsAvx() {
+    return dreamkurumi::CpuSupportsAvx();
 }
 
 } // extern "C"
-
