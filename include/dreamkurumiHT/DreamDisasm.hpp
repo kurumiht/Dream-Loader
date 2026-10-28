@@ -72,6 +72,45 @@ public:
         return result;
     }
 
+// ========================================================================
+    // Checks if an address starts with an existing hook (E9 / FF 25 / EB)
+    // Multi-Loader Coexistence Shield (EML, ShroudForge, Steam/OBS Overlays)
+    // ========================================================================
+    static bool HasExistingHook(const void* address, uintptr_t* outDest = nullptr) {
+        if (!address) return false;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(address);
+
+        // Case 1: 5-byte relative jump (E9 <disp32>)
+        if (p[0] == 0xE9) {
+            if (outDest) {
+                int32_t disp = *reinterpret_cast<const int32_t*>(p + 1);
+                *outDest = reinterpret_cast<uintptr_t>(p + 5) + disp;
+            }
+            return true;
+        }
+
+        // Case 2: 6-byte 64-bit indirect jump (FF 25 <disp32>)
+        if (p[0] == 0xFF && p[1] == 0x25) {
+            if (outDest) {
+                int32_t disp = *reinterpret_cast<const int32_t*>(p + 2);
+                uintptr_t ptrAddr = reinterpret_cast<uintptr_t>(p + 6) + disp;
+                *outDest = *reinterpret_cast<const uintptr_t*>(ptrAddr);
+            }
+            return true;
+        }
+
+        // Case 3: 2-byte short jump (EB <disp8>)
+        if (p[0] == 0xEB) {
+            if (outDest) {
+                int8_t disp = static_cast<int8_t>(p[1]);
+                *outDest = reinterpret_cast<uintptr_t>(p + 2) + disp;
+            }
+            return true;
+        }
+
+        return false;
+    }
+
     // Automatically calculate the exact instruction boundary >= minLength
     // Never cuts an instruction in half!
     static size_t GetBoundary(const void* address, size_t minLength) {

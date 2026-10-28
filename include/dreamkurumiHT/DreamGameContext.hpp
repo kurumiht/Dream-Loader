@@ -12,6 +12,7 @@
 #include "DreamReflection.hpp"
 #include "DreamPresets.hpp"
 #include "DreamLog.hpp"
+#include "DreamEnshroudedTypes.hpp"
 
 namespace dreamkurumi {
 
@@ -167,6 +168,41 @@ public:
     }
 
     // ========================================================================
+    // 3D World Cursor & Crosshair Coordinates (Keen world_cursor reflection)
+    // ========================================================================
+    void SetWorldCursor(const DreamWorldCursor& cursor) {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        m_cursor = cursor;
+    }
+
+    DreamWorldCursor GetWorldCursor() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_cursor;
+    }
+
+    bool GetWorldCursorPosition(float* outX, float* outY, float* outZ) const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (!m_cursor.isValid) return false;
+        if (outX) *outX = m_cursor.posX;
+        if (outY) *outY = m_cursor.posY;
+        if (outZ) *outZ = m_cursor.posZ;
+        return true;
+    }
+
+    bool GetWorldCursorRay(float* outOriginX, float* outOriginY, float* outOriginZ,
+                          float* outDirX, float* outDirY, float* outDirZ) const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (!m_cursor.isValid) return false;
+        if (outOriginX) *outOriginX = m_cursor.originX;
+        if (outOriginY) *outOriginY = m_cursor.originY;
+        if (outOriginZ) *outOriginZ = m_cursor.originZ;
+        if (outDirX) *outDirX = m_cursor.dirX;
+        if (outDirY) *outDirY = m_cursor.dirY;
+        if (outDirZ) *outDirZ = m_cursor.dirZ;
+        return true;
+    }
+
+    // ========================================================================
     // 4. Quick Gameplay Modification Presets (Directly integrated with Keen engine)
     // ========================================================================
 
@@ -232,6 +268,7 @@ private:
     std::unordered_map<std::string, void*> m_services;
     std::vector<std::function<void(void*)>> m_onPlayerSpawnCallbacks;
     std::vector<std::function<void(void*)>> m_onWorldLoadedCallbacks;
+    DreamWorldCursor m_cursor{};
 };
 
 // Top-level facade alias for clean developer syntax: DreamGame::GetLocalPlayer()

@@ -629,10 +629,31 @@ public:
             stolenOffset += decoded.length;
         }
 
-        // Jump back to target + stolenLen (FF 25 00 00 00 00 [64-bit])
-        emit8(0xFF); emit8(0x25);
-        emit32(0); // [rip + 0]
-        emit64(reinterpret_cast<uint64_t>(m_target + m_stolenLen));
+        // Multi-Loader Coexistence: If target already has an E9/FF 25 hook, chain directly to foreign destination!
+        bool existingForeignHook = false;
+        uintptr_t foreignDest = 0;
+        if (m_target[0] == 0xE9) {
+            int32_t oldRel = *reinterpret_cast<const int32_t*>(m_target + 1);
+            foreignDest = reinterpret_cast<uintptr_t>(m_target + 5) + oldRel;
+            existingForeignHook = true;
+        } else if (m_target[0] == 0xFF && m_target[1] == 0x25) {
+            int32_t disp = *reinterpret_cast<const int32_t*>(m_target + 2);
+            uintptr_t ptrAddress = reinterpret_cast<uintptr_t>(m_target + 6) + disp;
+            foreignDest = *reinterpret_cast<const uintptr_t*>(ptrAddress);
+            existingForeignHook = true;
+        }
+
+        if (existingForeignHook) {
+            DREAM_LOG_INFO("DreamMidHook: Transparently chaining over foreign hook at 0x%p -> 0x%p", m_target, foreignDest);
+            emit8(0xFF); emit8(0x25);
+            emit32(0); // [rip + 0]
+            emit64(foreignDest);
+        } else {
+            // Jump back to target + stolenLen (FF 25 00 00 00 00 [64-bit])
+            emit8(0xFF); emit8(0x25);
+            emit32(0); // [rip + 0]
+            emit64(reinterpret_cast<uint64_t>(m_target + m_stolenLen));
+        }
 
         // Copy generated stub to executable page
         std::memcpy(m_stubPage, code.data(), code.size());

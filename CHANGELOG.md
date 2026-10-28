@@ -4,6 +4,34 @@ All notable changes to the **dreamkurumiHT** Native Harmony Modding Framework wi
 
 ---
 
+## [v3.8.3] - 2026-10-29
+
+### 🚀 Highlights (จุดเด่นสำคัญในเวอร์ชั่นนี้)
+- **3D World Cursor & Crosshair Targeting Reflection (`DreamEnshroudedTypes.hpp`, `DreamGameContext.hpp` & `dreamkurumiHT_plugin.h`):**
+  - Reflected Enshrouded 1.0 Keen Engine `world_cursor` (`[R14 + 0x270]`).
+  - Added 52-byte packed `DreamWorldCursor` struct exposing 3D world hit coordinates (`posX, posY, posZ`), normalized raycast orientation (`dirX, dirY, dirZ`), eye origin, distance, flags, and validity bit.
+  - C-ABI exports `DK_GetWorldCursorPosition`, `DK_GetWorldCursorRay`, `DK_GetWorldCursor`, and `DK_SetWorldCursor` enabling pinpoint ranged harvesting and crosshair targeting for all plugins.
+- **Multi-Loader Coexistence Shield (`DreamDisasm.hpp` & `DreamHook.hpp`):**
+  - Added `DreamDisasm::HasExistingHook` to detect pre-existing 5-byte JMP (`0xE9`), 6-byte 64-bit indirect JMP (`0xFF 0x25`), and 2-byte short JMP (`0xEB`) installed by third-party mod loaders (EML, ShroudForge, Shroudtopia) or OBS/Steam overlays.
+  - `DreamMidHook` transparently forwards execution to the foreign hook's destination via 14-byte 64-bit indirect jump (`FF 25`) instead of clobbering foreign trampolines.
+  - Exported `DK_Hook_HasExistingHook` via C-ABI.
+- **Linux Proton / Wine Headless Dedicated Server Detection & Safe Threading (`DreamThread.hpp`):**
+  - Added `IsRunningUnderWine()` and `GetWineVersion()` inspecting `ntdll!wine_get_version`.
+  - Seamlessly handles thread suspension under Linux Docker / Pterodactyl containers, eliminating thread freeze hang risks.
+  - Exported `DK_Env_IsWine` via C-ABI.
+- **Voxel Engine 8x8x8 Boundary-Safe Alignment (`DreamVoxelEngine.hpp`):**
+  - Implemented `AlignToChunkBoundary` 8-cell mathematical bounding formula for Enshrouded's 512-cell voxel chunks, eliminating edge-case mesh tearing and buffer overreads.
+- **Keen Games KFC4 Container Binary Header Validation (`DreamAssetBridge.hpp`):**
+  - Added packed 16-byte `Kfc4ContainerHeader` (`0x3443464B` magic) validation and `GetKfc4Version`.
+  - Exported `DK_Asset_IsValidKfc4` via C-ABI.
+- **Expanded Verification Test Suite (69/69 Unit Tests Passing):**
+  - Test 66: 3D World Cursor & Crosshair Targeting Reflection.
+  - Test 67: Multi-Loader Coexistence Shield & Hook Forwarding.
+  - Test 68: Linux Proton / Wine Dedicated Server Detection.
+  - Test 69: KFC4 Container Binary Header Validation.
+
+---
+
 ## [v3.8.0] - 2026-10-28
 
 ### 🚀 Highlights (จุดเด่นสำคัญในเวอร์ชั่นนี้)

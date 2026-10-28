@@ -23,6 +23,39 @@ using pfnNtGetNextThread = NTSTATUS(NTAPI*)(
 // ============================================================================
 // Instruction Pointer Map Entry for Non-Linear Trampoline Relocations
 // ============================================================================
+// ============================================================================
+// Wine / Proton Linux Environment Detection
+// Enables seamless thread suspension & watchdog timing for Headless Dedicated Servers
+// running on Linux via Docker / Pterodactyl / Wine / Proton
+// ============================================================================
+inline bool IsRunningUnderWine() {
+    static int s_isWine = -1;
+    if (s_isWine != -1) return s_isWine == 1;
+
+    HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+    if (hNtdll) {
+        typedef const char* (__cdecl *pfn_wine_get_version)(void);
+        auto pfn = reinterpret_cast<pfn_wine_get_version>(GetProcAddress(hNtdll, "wine_get_version"));
+        if (pfn) {
+            s_isWine = 1;
+            DREAM_LOG_INFO("DreamThread: Detected Wine/Proton Linux environment (Wine %s)", pfn());
+            return true;
+        }
+    }
+    s_isWine = 0;
+    return false;
+}
+
+inline const char* GetWineVersion() {
+    HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+    if (hNtdll) {
+        typedef const char* (__cdecl *pfn_wine_get_version)(void);
+        auto pfn = reinterpret_cast<pfn_wine_get_version>(GetProcAddress(hNtdll, "wine_get_version"));
+        if (pfn) return pfn();
+    }
+    return nullptr;
+}
+
 struct DreamIpMap {
     uint8_t orig;
     uint8_t tramp;

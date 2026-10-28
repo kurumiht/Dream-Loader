@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **Modern Native Harmony Hooking & Modding Framework for C++20 / x64 Windows**  
 > *(Zero-Assembly, Zero-RAM-Scan, Hardware Breakpoint VEH, High-Performance Keen Games Engine Hooking)*  
-> **Framework Version:** `3.8.0` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
+> **Framework Version:** `3.8.3` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
 
 ---
 
@@ -9,11 +9,11 @@
   <b>Language Switcher / สลับภาษา:</b><br>
   <a href="README.md">🇬🇧 <b>English (Default)</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-Core-v3.8.0.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.8.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.0 Framework" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.3/Dream-Core-v3.8.3.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.8.3%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.3 Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-AoE-Harvest-v3.8.0.zip">
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.3/Dream-AoE-Harvest-v3.8.3.zip">
     <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20(Mod%20Plugin)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
   </a>
 </p>
@@ -29,8 +29,8 @@
 >
 > **Separate Downloads (`Dream-Core` vs `Dream-AoE-Harvest`):**  
 > To avoid any confusion—especially if you already use or develop other mods similar to ours—the downloads are provided in two separate packages:  
-> * 📦 **`Dream-Core-v3.8.0.zip`**: The standalone core native Harmony framework engine and C-ABI plugin loader. Does not bundle gameplay mods.  
-> * 🌾 **`Dream-AoE-Harvest-v3.8.0.zip`**: The standalone AoE crop harvesting mod plugin (3.5m radius, F8 toggle), provided separately so you can freely plug it into your server or client `mods/` directory.
+> * 📦 **`Dream-Core-v3.8.3.zip`**: The standalone core native Harmony framework engine and C-ABI plugin loader. Does not bundle gameplay mods.  
+> * 🌾 **`Dream-AoE-Harvest-v3.8.3.zip`**: The standalone AoE crop harvesting mod plugin (3.5m radius, F8 toggle), provided separately so you can freely plug it into your server or client `mods/` directory.
 
 ---
 
@@ -40,7 +40,7 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 
 ---
 
-## 65 Master Capabilities & Architecture
+## 69 Master Capabilities & Architecture
 
 1. **Declarative Harmony API (`Prefix` / `Postfix`)**
    - Clean and expressive function hooking without writing raw opcodes or calculating `E9 JMP` offsets manually.
@@ -240,10 +240,18 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
     - `ScopedFiberTebGuard` with stack range validation, Vulkan swapchain creation hook with `COLOR_ATTACHMENT` flag injection, monotonic `generation` ABA tracking, and segregated pool arenas (`InlineLeaf` vs `MidHookFramed`).
 65. **Zero-Syscall Stack Bounds Cache & Race-Free Per-Stub Registration**
     - Direct-mapped lock-free 64-entry L1 cache (~2 ns latency) eliminating `VirtualQuery` in hot loops, and per-stub `RUNTIME_FUNCTION` registration eliminating table delete-readd race windows.
+66. **3D World Cursor & Crosshair Targeting Reflection (`DreamEnshroudedTypes.hpp`, `DreamGameContext.hpp`)**
+    - Deep reflection of Keen Engine 3D world cursor at `[R14 + 0x270]` with 52-byte packed struct (`DreamWorldCursor`). Exposes 3D world coordinates (`posX, posY, posZ`), normalized raycast orientation (`dirX, dirY, dirZ`), distance, and flags via C-ABI exports.
+67. **Multi-Loader Coexistence Shield & Trampoline Forwarding (`DreamDisasm.hpp`, `DreamHook.hpp`)**
+    - Detects pre-existing hooks (`0xE9`, `0xFF 0x25`, `0xEB`) installed by foreign loaders (EML, ShroudForge, Shroudtopia) or streaming overlays (OBS/Steam) and automatically chains execution via 14-byte 64-bit indirect jumps without clobbering foreign trampolines.
+68. **Linux Proton / Wine Headless Dedicated Server Detection & Safe Threading (`DreamThread.hpp`)**
+    - Dynamically detects Linux/Wine runtime environments via `ntdll!wine_get_version` and provides safe fallback for thread freeze operations in Docker/Pterodactyl dedicated servers.
+69. **Keen Games KFC4 Container Binary Header Validation (`DreamAssetBridge.hpp`)**
+    - 16-byte packed container header validation (`0x3443464B` magic / `"KFC4"`) and version extraction for Enshrouded 1.0 raw asset packages.
 
 ---
 
-## Verification Suite (65/65 Tests Passed - 100% Green)
+## Verification Suite (69/69 Tests Passed - 100% Green)
 
 ```text
 [TEST 1] Testing DreamCache...                         -> [PASS]
@@ -311,9 +319,13 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 [TEST 63] Senior Dev Architecture Hardening            -> [PASS] (MinimalUnwindInfo, 8-byte atomic CAS, NtGetNextThread freeze ~18 µs, 14-byte overlay chaining!)
 [TEST 64] Keen Job Worker Fibers & Vulkan Swapchain    -> [PASS] (ScopedFiberTebGuard stack validation, Vulkan ABA generation tracking, Leaf vs Framed pool segregation!)
 [TEST 65] Zero-Syscall Stack Bounds Cache & Unwind Reg -> [PASS] (64-entry direct-mapped lock-free cache ~2 ns, independent per-stub RUNTIME_FUNCTION!)
+[TEST 66] 3D World Cursor & Crosshair Targeting Reflect -> [PASS] (Dissected [R14 + 0x270], 52-byte struct, normalized raycast & C-ABI exports!)
+[TEST 67] Multi-Loader Coexistence Shield & Forwarding  -> [PASS] (Detected foreign E9/FF 25/EB jumps, 14-byte trampoline forwarding!)
+[TEST 68] Linux Proton / Wine Headless Server Detection -> [PASS] (ntdll!wine_get_version probing & safe fallback for thread freeze!)
+[TEST 69] Keen Games KFC4 Container Binary Validation   -> [PASS] (16-byte packed header, 'KFC4' 0x3443464B magic check & version extraction!)
 ```
 
-**ALL 65 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!**
+**ALL 69 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!**
 
 ---
 

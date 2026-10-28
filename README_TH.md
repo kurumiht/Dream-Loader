@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **โมเดิร์นเนทีฟ Harmony Hooking & Modding Framework สำหรับ C++20 บน Windows x64**  
 > *(ไม่ต้องเขียน Assembly, ไม่ต้องสแกนแรม, ดักจับผ่าน Hardware Breakpoint VEH, ประสิทธิภาพสูงสุดสำหรับ Keen Games Engine)*  
-> **เวอร์ชันของ Framework:** `3.8.0` | **สถาปัตยกรรม:** Windows x64 | **เกมที่รองรับ:** Enshrouded 1.0+
+> **เวอร์ชันของ Framework:** `3.8.3` | **สถาปัตยกรรม:** Windows x64 | **เกมที่รองรับ:** Enshrouded 1.0+
 
 ---
 
@@ -9,18 +9,18 @@
   <b>สลับภาษา / Language Switcher:</b><br>
   <a href="README.md">🇬🇧 <b>English</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-Core-v3.8.0.zip">
-    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.8.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.8.0 Framework" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.3/Dream-Core-v3.8.3.zip">
+    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.8.3%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.8.3 Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-AoE-Harvest-v3.8.0.zip">
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.3/Dream-AoE-Harvest-v3.8.3.zip">
     <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--AoE--Harvest%20(Mod%20Plugin)-blue?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-AoE-Harvest Mod" />
   </a>
 </p>
 
 ---
 
-## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (65 Master Capabilities)
+## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (69 Master Capabilities)
 
 > [!NOTE]
 > ### 💬 ข้อความจากผู้พัฒนา / จุดประสงค์ของโปรเจกต์นี้
@@ -29,8 +29,8 @@
 >
 > **การแยกไฟล์ดาวน์โหลด (`Dream-Core` กับ `Dream-AoE-Harvest`):**  
 > เพื่อป้องกันความสับสนสำหรับผู้ใช้งาน—โดยเฉพาะในกรณีที่คุณอาจจะมีม็อดตัวอื่นที่ทำงานคล้ายๆ กับเราอยู่แล้ว—จึงได้ทำการแยกไฟล์ Zip ดาวน์โหลดออกจากกันอย่างอิสระ:  
-> * 📦 **`Dream-Core-v3.8.0.zip`**: ตัวแกนหลักของ Harmony Hooking Engine และ Native Loader สำหรับ Enshrouded (ประกอบด้วย Header C++20, ตัว Loader, และ Template) จะไม่มีตัวม็อดเกมพ่วงไปด้วย  
-> * 🌾 **`Dream-AoE-Harvest-v3.8.0.zip`**: ตัวม็อด AoE Harvest (เกี่ยวพืชผลอัตโนมัติรอบตัว 3.5 เมตร, กดเปิด-ปิดด้วย `F8`) แยกไว้ต่างหาก สามารถดาวน์โหลดไปแตกไฟล์ลงโฟลเดอร์ `mods/` แล้วเปิดเล่นได้ทันที
+> * 📦 **`Dream-Core-v3.8.3.zip`**: ตัวแกนหลักของ Harmony Hooking Engine และ Native Loader สำหรับ Enshrouded (ประกอบด้วย Header C++20, ตัว Loader, และ Template) จะไม่มีตัวม็อดเกมพ่วงไปด้วย  
+> * 🌾 **`Dream-AoE-Harvest-v3.8.3.zip`**: ตัวม็อด AoE Harvest (เกี่ยวพืชผลอัตโนมัติรอบตัว 3.5 เมตร, กดเปิด-ปิดด้วย `F8`) แยกไว้ต่างหาก สามารถดาวน์โหลดไปแตกไฟล์ลงโฟลเดอร์ `mods/` แล้วเปิดเล่นได้ทันที
 
 ---
 
@@ -245,10 +245,18 @@
     - ระบบ `ScopedFiberTebGuard` ป้องกันการแครชของ Stack บน Keen Voxel Worker Fibers, การดักสร้าง Swapchain พร้อมฉีด Flag `COLOR_ATTACHMENT` และตัวนับ Monotonic Generation ป้องกันปัญหา ABA
 65. **Zero-Syscall Stack Bounds Cache & Race-Free Per-Stub Registration**
     - แคช L1 แบบ Direct-Mapped Lock-Free 64 ช่อง ความเร็ว ~2 ns ตัดการเรียก `VirtualQuery` ใน Hot-Loop และระบบลงทะเบียน `RUNTIME_FUNCTION` รายสตัด ป้องกัน Race Condition จากการลบและเพิ่มตารางซ้ำซ้อน
+66. **3D World Cursor & Crosshair Targeting Reflection (`DreamEnshroudedTypes.hpp`, `DreamGameContext.hpp`)**
+    - ถอดรหัสโครงสร้างพิกัดเป้าเล็ง 3 มิติ `world_cursor` (`[R14 + 0x270]`) ของ Keen Engine ขนาด 52 ไบต์ (`DreamWorldCursor`) ให้ข้อมูลพิกัดในโลก (`posX, posY, posZ`), เวกเตอร์มุมเล็ง (`dirX, dirY, dirZ`), ระยะทาง และสถานะความถูกต้อง พร้อมฟังก์ชันส่งออก C-ABI สำหรับม็อดเล็งเป้าและขุดระยะไกล
+67. **Multi-Loader Coexistence Shield & Trampoline Forwarding (`DreamDisasm.hpp`, `DreamHook.hpp`)**
+    - โล่ป้องกันการชนของ Hook ตรวจจับการวาง Hook ล่วงหน้า (`0xE9`, `0xFF 0x25`, `0xEB`) จากโหลดเดอร์อื่น (EML, ShroudForge, Shroudtopia) หรือสตรีมมิ่งโอเวอร์เลย์ (OBS/Steam) พร้อมส่งต่อการทำงานอัตโนมัติด้วยคำสั่ง Indirect Jump 14 ไบต์โดยไม่ทำลาย Trampoline เดิม
+68. **Linux Proton / Wine Headless Dedicated Server Detection & Safe Threading (`DreamThread.hpp`)**
+    - ตรวจสอบสภาพแวดล้อม Linux Dedicated Server ผ่านฟังก์ชัน `wine_get_version` ใน `ntdll.dll` พร้อมระบบเธรดสำรองที่ปลอดภัย ไม่ค้างเมื่อรันบน Docker / Pterodactyl Container
+69. **Keen Games KFC4 Container Binary Header Validation (`DreamAssetBridge.hpp`)**
+    - ตรวจสอบโครงสร้างเฮดเดอร์ของแพ็กเกจไฟล์ Keen Games 1.0 (`0x3443464B` หรือ `"KFC4"`) ขนาด 16 ไบต์ และสกัดเวอร์ชันข้อมูลของคอนเทนเนอร์ได้อย่างแม่นยำ
 
 ---
 
-## ผลการทดสอบ (Verification Suite 65/65 ผ่านหมด 100%)
+## ผลการทดสอบ (Verification Suite 69/69 ผ่านหมด 100%)
 
 ```text
 [TEST 1] Testing DreamCache...                         -> [PASS]
@@ -316,9 +324,13 @@
 [TEST 63] Senior Dev Architecture Hardening            -> [PASS] (MinimalUnwindInfo, 8-byte Atomic CAS, NtGetNextThread ~18 µs, 14-byte Chaining!)
 [TEST 64] Keen Job Worker Fibers & Vulkan Swapchain    -> [PASS] (ScopedFiberTebGuard ป้องกันแครช, Vulkan ABA Generation Tracker, Leaf vs Framed Segregation!)
 [TEST 65] Zero-Syscall Stack Bounds Cache & Unwind Reg -> [PASS] (แคช L1 Direct-Mapped Lock-Free 64 ช่อง ~2 ns และ RUNTIME_FUNCTION รายสตัด ปลอดภัย 100%!)
+[TEST 66] 3D World Cursor & Crosshair Targeting Reflect -> [PASS] (ถอดรหัส [R14 + 0x270], 52-byte struct, เวกเตอร์ Raycast และ C-ABI Exports ครบถ้วน!)
+[TEST 67] Multi-Loader Coexistence Shield & Forwarding  -> [PASS] (ตรวจจับ E9/FF 25/EB จาก EML/ShroudForge/Overlays พร้อมส่งต่อผ่าน 14-byte Trampoline!)
+[TEST 68] Linux Proton / Wine Headless Server Detection -> [PASS] (ตรวจสอบ ntdll!wine_get_version และ Fallback ปลอดภัยสำหรับ Thread Freeze บน Linux!)
+[TEST 69] Keen Games KFC4 Container Binary Validation   -> [PASS] (ตรวจสอบ Magic 0x3443464B 'KFC4' และสกัดเวอร์ชันคอนเทนเนอร์ 16 ไบต์สมบูรณ์!)
 ```
 
-**ผลการทดสอบผ่านทั้งหมด 65/65 รายการ! dreamkurumiHT ได้รับการตรวจสอบความสมบูรณ์ 100%!**
+**ผลการทดสอบผ่านทั้งหมด 69/69 รายการ! dreamkurumiHT ได้รับการตรวจสอบความสมบูรณ์ 100%!**
 
 ---
 

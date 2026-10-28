@@ -3,6 +3,8 @@
 #include <cassert>
 #include <iomanip>
 #include "../include/dreamkurumiHT/dreamkurumiHT.hpp"
+#define DREAMKURUMI_EXPORTS
+#include "../include/dreamkurumiHT/DreamCExport.hpp"
 
 // ============================================================================
 // Dummy Game Functions to Hook (Simulating Game Code)
@@ -2258,6 +2260,13 @@ int main() {
         assert(mockRule.snapHorizontally == 1);
         assert(mockRule.directionalHorizontalSnap == 1);
 
+        // Verify Chunk Alignment Formula (8x8x8 Boundary-Safe)
+        int32_t aLow = 0, aHigh = 0;
+        dreamkurumi::DreamVoxelEngine::AlignToChunkBoundary(3, 19, aLow, aHigh);
+        assert(aLow == 0 && aHigh == 24);
+        dreamkurumi::DreamVoxelEngine::AlignToChunkBoundary(-5, 10, aLow, aHigh);
+        assert(aLow == -8 && aHigh == 16);
+
         // Test voxel query and damage lifecycle
         voxel.SetVoxel(10, 20, 30, dreamkurumi::VoxelMaterialType::FlintOre, 100.0f);
         auto b1 = voxel.QueryVoxel(10, 20, 30);
@@ -2573,6 +2582,146 @@ int main() {
         std::cout << "  [PASS] Test 65 (Zero-Syscall Fiber Cache & Race-Free Registration) fully verified!\n\n";
     }
 
+
+    // ============================================================================
+    // Test 66: 3D World Cursor & Crosshair Targeting (Keen world_cursor reflection)
+    // ============================================================================
+    {
+        std::cout << "[Test 66] Testing 3D World Cursor & Crosshair Targeting Reflection...\n";
+
+        // 1. Struct layout and size verification
+        static_assert(sizeof(dreamkurumi::DreamWorldCursor) == 52, "DreamWorldCursor must be 52 bytes");
+        assert(sizeof(dreamkurumi::DreamWorldCursor) == 52);
+
+        // 2. Initial state (should be invalid before any raycast update)
+        float x = 0.0f, y = 0.0f, z = 0.0f;
+        assert(!DK_GetWorldCursorPosition(&x, &y, &z));
+
+        // 3. Simulated world cursor sample (from raycast hit at coordinate 124.5, 45.2, -310.8)
+        dreamkurumi::DreamWorldCursor cursor{};
+        cursor.posX = 124.5f;
+        cursor.posY = 45.2f;
+        cursor.posZ = -310.8f;
+        cursor.dirX = 0.577f;
+        cursor.dirY = -0.577f;
+        cursor.dirZ = 0.577f;
+        cursor.originX = 100.0f;
+        cursor.originY = 60.0f;
+        cursor.originZ = -330.0f;
+        cursor.distance = 28.5f;
+        cursor.flags = 0x01; // Hit surface
+        cursor.sequence = 1042;
+        cursor.isValid = 1;
+
+        DK_SetWorldCursor(&cursor);
+
+        // 4. Verification via DK_GetWorldCursorPosition
+        assert(DK_GetWorldCursorPosition(&x, &y, &z));
+        assert(std::abs(x - 124.5f) < 0.001f);
+        assert(std::abs(y - 45.2f) < 0.001f);
+        assert(std::abs(z - (-310.8f)) < 0.001f);
+        std::cout << "  DK_GetWorldCursorPosition -> (X: " << x << ", Y: " << y << ", Z: " << z << ") -> [PASS]\n";
+
+        // 5. Verification via DK_GetWorldCursorRay
+        float ox = 0, oy = 0, oz = 0, dx = 0, dy = 0, dz = 0;
+        assert(DK_GetWorldCursorRay(&ox, &oy, &oz, &dx, &dy, &dz));
+        assert(std::abs(ox - 100.0f) < 0.001f);
+        assert(std::abs(dx - 0.577f) < 0.001f);
+        std::cout << "  DK_GetWorldCursorRay -> Origin: (" << ox << ", " << oy << ", " << oz << ") Dir: (" << dx << ", " << dy << ", " << dz << ") -> [PASS]\n";
+
+        // 6. Verification via full snapshot DK_GetWorldCursor
+        dreamkurumi::DreamWorldCursor snapshot{};
+        assert(DK_GetWorldCursor(&snapshot));
+        assert(snapshot.isValid == 1);
+        assert(snapshot.sequence == 1042);
+        assert(std::abs(snapshot.distance - 28.5f) < 0.001f);
+        std::cout << "  DK_GetWorldCursor snapshot -> Distance: " << snapshot.distance << "m, Seq: " << snapshot.sequence << " -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 66 (3D World Cursor & Crosshair Targeting) fully verified!\n\n";
+    }
+
+// ============================================================================
+    // Test 67: Multi-Loader Coexistence Shield (EML, ShroudForge, Steam/OBS Overlays)
+    // ============================================================================
+    {
+        std::cout << "[Test 67] Testing Multi-Loader Coexistence Shield & Hook Forwarding...\n";
+
+        // 1. HasExistingHook detection on simulated foreign jump
+        uint8_t foreignHookSite[16] = { 0xE9, 0x40, 0x12, 0x00, 0x00, 0x90, 0x90, 0x90 };
+        uintptr_t foreignDest = 0;
+        bool hasHook = dreamkurumi::DreamDisasm::HasExistingHook(foreignHookSite, &foreignDest);
+        assert(hasHook == true);
+        uintptr_t expectedDest = reinterpret_cast<uintptr_t>(foreignHookSite + 5) + 0x1240;
+        assert(foreignDest == expectedDest);
+        std::cout << "  DreamDisasm::HasExistingHook (E9 detection & destination calculation) -> [PASS]\n";
+
+        // 2. FF 25 64-bit indirect jump detection
+        uint8_t foreignIndirectSite[16] = { 0xFF, 0x25, 0x02, 0x00, 0x00, 0x00, 0x90, 0x90 };
+        uintptr_t simulatedTargetPtr = 0x7FFE12345678ULL;
+        // place simulated pointer at foreignIndirectSite + 8
+        *reinterpret_cast<uintptr_t*>(foreignIndirectSite + 8) = simulatedTargetPtr;
+        uintptr_t indirectDest = 0;
+        assert(dreamkurumi::DreamDisasm::HasExistingHook(foreignIndirectSite, &indirectDest));
+        assert(indirectDest == simulatedTargetPtr);
+        std::cout << "  DreamDisasm::HasExistingHook (FF 25 64-bit indirect jump detection) -> [PASS]\n";
+
+        // 3. PluginHost C-ABI export DK_Hook_HasExistingHook verification
+        uintptr_t cAbiDest = 0;
+        assert(DK_Hook_HasExistingHook(foreignHookSite, &cAbiDest));
+        assert(cAbiDest == expectedDest);
+        std::cout << "  DK_Hook_HasExistingHook via C-ABI -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 67 (Multi-Loader Coexistence Shield) fully verified!\n\n";
+    }
+
+    // ============================================================================
+    // Test 68: Linux Proton / Wine Environment Detection
+    // ============================================================================
+    {
+        std::cout << "[Test 68] Testing Linux Proton / Wine Dedicated Server Detection...\n";
+
+        bool isWine = dreamkurumi::IsRunningUnderWine();
+        std::cout << "  Wine / Proton Environment Status: " << (isWine ? "RUNNING UNDER WINE/PROTON (Linux)" : "NATIVE WINDOWS NT") << "\n";
+
+        // Test DK_Env_IsWine C-ABI export
+        bool cAbiWine = DK_Env_IsWine();
+        assert(cAbiWine == isWine);
+        std::cout << "  DK_Env_IsWine export parity -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 68 (Wine / Proton Detection) fully verified!\n\n";
+    }
+
+    // ============================================================================
+    // Test 69: KFC4 Container Binary Header Validation (Keen Games Engine Format)
+    // ============================================================================
+    {
+        std::cout << "[Test 69] Testing KFC4 Container Binary Header Validation...\n";
+
+        // 1. Struct size and layout verification
+        static_assert(sizeof(dreamkurumi::Kfc4ContainerHeader) == 16, "Kfc4ContainerHeader must be 16 bytes");
+        assert(sizeof(dreamkurumi::Kfc4ContainerHeader) == 16);
+
+        // 2. Valid KFC4 container sample
+        dreamkurumi::Kfc4ContainerHeader validHdr{};
+        validHdr.magic = 0x3443464B; // 'K','F','C','4'
+        validHdr.version = 4;
+        validHdr.flags = 0x01;
+        validHdr.entryCount = 1250;
+
+        assert(dreamkurumi::DreamAssetBridge::IsValidKfc4Container(&validHdr, sizeof(validHdr)));
+        assert(dreamkurumi::DreamAssetBridge::GetKfc4Version(&validHdr, sizeof(validHdr)) == 4);
+        assert(DK_Asset_IsValidKfc4(&validHdr, sizeof(validHdr)) == true);
+        std::cout << "  Valid KFC4 container magic ('KFC4') & version 4 verification -> [PASS]\n";
+
+        // 3. Corrupted or invalid magic rejection
+        uint8_t garbageData[32] = { 0x50, 0x4B, 0x03, 0x04 }; // ZIP magic
+        assert(!dreamkurumi::DreamAssetBridge::IsValidKfc4Container(garbageData, sizeof(garbageData)));
+        assert(DK_Asset_IsValidKfc4(garbageData, sizeof(garbageData)) == false);
+        std::cout << "  Corrupt / Non-KFC4 container rejection -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 69 (KFC4 Container Header Validation) fully verified!\n\n";
+    }
+
     // Cleanly stop any background singletons before process exit
     dreamkurumi::DreamToast::Instance().Shutdown();
     dreamkurumi::DreamWatchdog::Instance().Stop();
@@ -2582,7 +2731,7 @@ int main() {
     dreamkurumi::DreamCrashGuard::Shutdown();
 
     std::cout << "============================================================\n";
-    std::cout << " ALL 65 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
+    std::cout << " ALL 69 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
     std::cout << "============================================================\n" << std::flush;
 
     TerminateProcess(GetCurrentProcess(), 0);

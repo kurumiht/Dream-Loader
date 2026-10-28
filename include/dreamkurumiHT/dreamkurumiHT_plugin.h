@@ -15,7 +15,7 @@
 namespace dreamkurumi {
 
 // ============================================================================
-// Extended SIMD / AVX2 CPU Register Context for Plugins (v3.8.0-beta)
+// Extended SIMD / AVX2 CPU Register Context for Plugins (v3.8.3)
 // ============================================================================
 #pragma pack(push, 1)
 struct DreamYmmRegister {
@@ -71,6 +71,33 @@ struct DreamCpuContext {
 #pragma pack(pop)
 
 
+// ============================================================================
+// 3D World Cursor & Crosshair Targeting (Enshrouded 1.0 Raycast Coordinates)
+// Discovered from Keen Engine world_cursor reflection ([R14 + 0x270])
+// ============================================================================
+#ifndef DREAM_WORLD_CURSOR_DEFINED
+#define DREAM_WORLD_CURSOR_DEFINED
+#pragma pack(push, 1)
+struct DreamWorldCursor {
+    float posX{0.0f};      // 0x00: 3D hit position X (in world meters)
+    float posY{0.0f};      // 0x04: 3D hit position Y
+    float posZ{0.0f};      // 0x08: 3D hit position Z
+    float dirX{0.0f};      // 0x0C: Ray direction vector X (normalized)
+    float dirY{0.0f};      // 0x10: Ray direction vector Y
+    float dirZ{0.0f};      // 0x14: Ray direction vector Z
+    float originX{0.0f};   // 0x18: Raycast origin X (camera/eye position)
+    float originY{0.0f};   // 0x1C: Raycast origin Y
+    float originZ{0.0f};   // 0x20: Raycast origin Z
+    float distance{0.0f};  // 0x24: Raycast hit distance / depth
+    uint32_t flags{0};     // 0x28: State flags (0x01 = hit surface, 0x02 = hit entity, etc.)
+    uint32_t sequence{0};  // 0x2C: Frame sequence counter
+    uint8_t isValid{0};    // 0x30: 1 if cursor points to a valid 3D hit location, 0 otherwise
+    uint8_t _pad[3]{0,0,0};// 0x31: Alignment padding
+};
+#pragma pack(pop)
+static_assert(sizeof(DreamWorldCursor) == 52, "DreamWorldCursor size must be 52 bytes");
+#endif
+
 // Function pointer signatures for all core dreamkurumiHT exports
 typedef bool (*FnDK_Initialize)(const char* cachePath);
 typedef size_t (*FnDK_PatchAll)();
@@ -93,6 +120,11 @@ typedef bool (*FnDK_ExecuteProtected)(const char* modName, void (*cb)(void* user
 typedef void* (*FnDK_GetEntity)(void* pContext, uint32_t entityId);
 typedef void* (*FnDK_GetEntityComponent)(void* pEntity, uint16_t compId);
 typedef bool (*FnDK_GetEntityPosition)(void* pEntity, float* outX, float* outY, float* outZ);
+typedef bool (*FnDK_GetWorldCursorPosition)(float* outX, float* outY, float* outZ);
+typedef bool (*FnDK_GetWorldCursorRay)(float* outOriginX, float* outOriginY, float* outOriginZ,
+                                      float* outDirX, float* outDirY, float* outDirZ);
+typedef bool (*FnDK_GetWorldCursor)(DreamWorldCursor* outCursor);
+typedef void (*FnDK_SetWorldCursor)(const DreamWorldCursor* inCursor);
 
 typedef void (*FnDK_Log)(int level, const char* msg);
 
@@ -140,6 +172,9 @@ typedef bool (*FnDK_Overlay_ExecuteCommand)(const char* cmd);
 
 typedef bool (*FnDK_Env_IsDedicatedServer)();
 typedef bool (*FnDK_Env_IsClient)();
+typedef bool (*FnDK_Env_IsWine)();
+typedef bool (*FnDK_Hook_HasExistingHook)(const void* target, uintptr_t* outDest);
+typedef bool (*FnDK_Asset_IsValidKfc4)(const void* data, size_t size);
 
 typedef void (*FnDK_Watchdog_Heartbeat)();
 typedef void (*FnDK_Watchdog_RegisterThread)(const char* name);
@@ -210,6 +245,10 @@ public:
         BIND_DK(DK_GetEntity);
         BIND_DK(DK_GetEntityComponent);
         BIND_DK(DK_GetEntityPosition);
+        BIND_DK(DK_GetWorldCursorPosition);
+        BIND_DK(DK_GetWorldCursorRay);
+        BIND_DK(DK_GetWorldCursor);
+        BIND_DK(DK_SetWorldCursor);
 
         BIND_DK(DK_Log);
 
@@ -255,6 +294,9 @@ public:
 
         BIND_DK(DK_Env_IsDedicatedServer);
         BIND_DK(DK_Env_IsClient);
+        BIND_DK(DK_Env_IsWine);
+        BIND_DK(DK_Hook_HasExistingHook);
+        BIND_DK(DK_Asset_IsValidKfc4);
 
         BIND_DK(DK_Watchdog_Heartbeat);
         BIND_DK(DK_Watchdog_RegisterThread);
@@ -315,6 +357,10 @@ public:
     FnDK_GetEntity pfn_DK_GetEntity = nullptr;
     FnDK_GetEntityComponent pfn_DK_GetEntityComponent = nullptr;
     FnDK_GetEntityPosition pfn_DK_GetEntityPosition = nullptr;
+    FnDK_GetWorldCursorPosition pfn_DK_GetWorldCursorPosition = nullptr;
+    FnDK_GetWorldCursorRay pfn_DK_GetWorldCursorRay = nullptr;
+    FnDK_GetWorldCursor pfn_DK_GetWorldCursor = nullptr;
+    FnDK_SetWorldCursor pfn_DK_SetWorldCursor = nullptr;
 
     FnDK_Log pfn_DK_Log = nullptr;
 
@@ -361,6 +407,9 @@ public:
 
     FnDK_Env_IsDedicatedServer pfn_DK_Env_IsDedicatedServer = nullptr;
     FnDK_Env_IsClient pfn_DK_Env_IsClient = nullptr;
+    FnDK_Env_IsWine pfn_DK_Env_IsWine = nullptr;
+    FnDK_Hook_HasExistingHook pfn_DK_Hook_HasExistingHook = nullptr;
+    FnDK_Asset_IsValidKfc4 pfn_DK_Asset_IsValidKfc4 = nullptr;
 
     FnDK_Watchdog_Heartbeat pfn_DK_Watchdog_Heartbeat = nullptr;
     FnDK_Watchdog_RegisterThread pfn_DK_Watchdog_RegisterThread = nullptr;
@@ -448,6 +497,30 @@ inline void SetSuperMining(bool enable, float mult = 1.0f) {
     }
 }
 
+inline bool IsRunningUnderWine() {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_Env_IsWine) {
+        return host.pfn_DK_Env_IsWine();
+    }
+    return false;
+}
+
+inline bool HasExistingHook(const void* target, uintptr_t* outDest = nullptr) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_Hook_HasExistingHook) {
+        return host.pfn_DK_Hook_HasExistingHook(target, outDest);
+    }
+    return false;
+}
+
+inline bool IsValidKfc4Container(const void* data, size_t size) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_Asset_IsValidKfc4) {
+        return host.pfn_DK_Asset_IsValidKfc4(data, size);
+    }
+    return false;
+}
+
 inline bool IsDedicatedServer() {
     auto& host = PluginHost::Instance();
     if (host.Init() && host.pfn_DK_Env_IsDedicatedServer) {
@@ -527,6 +600,38 @@ inline bool GetEntityPosition(void* pEntity, float* outX, float* outY, float* ou
         return host.pfn_DK_GetEntityPosition(pEntity, outX, outY, outZ);
     }
     return false;
+}
+
+inline bool GetWorldCursorPosition(float* outX, float* outY, float* outZ) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_GetWorldCursorPosition) {
+        return host.pfn_DK_GetWorldCursorPosition(outX, outY, outZ);
+    }
+    return false;
+}
+
+inline bool GetWorldCursorRay(float* outOriginX, float* outOriginY, float* outOriginZ,
+                              float* outDirX, float* outDirY, float* outDirZ) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_GetWorldCursorRay) {
+        return host.pfn_DK_GetWorldCursorRay(outOriginX, outOriginY, outOriginZ, outDirX, outDirY, outDirZ);
+    }
+    return false;
+}
+
+inline bool GetWorldCursor(DreamWorldCursor* outCursor) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_GetWorldCursor) {
+        return host.pfn_DK_GetWorldCursor(outCursor);
+    }
+    return false;
+}
+
+inline void SetWorldCursor(const DreamWorldCursor* inCursor) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_SetWorldCursor) {
+        host.pfn_DK_SetWorldCursor(inCursor);
+    }
 }
 
 inline void NotifyPlayerLogin(uint32_t entityId, const char* name, bool isAdmin) {

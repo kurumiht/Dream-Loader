@@ -16,6 +16,17 @@ namespace dreamkurumi {
 // DreamAssetBridge - Dynamic Engine Asset & Resource Interception Engine
 // Enables runtime swapping of Fonts, LocaTags, Textures & Templates (0% PAK edit)
 // ============================================================================
+#pragma pack(push, 1)
+// Dissected Keen Games Holistic Engine KFC4 Container Header
+struct Kfc4ContainerHeader {
+    uint32_t magic;      // 0x00: 'K','F','C','4' (0x3443464B in Little-Endian)
+    uint32_t version;    // 0x04: Format Version (4 for Enshrouded 1.0)
+    uint32_t flags;      // 0x08: Compression & encryption flags
+    uint32_t entryCount; // 0x0C: Total resource entries
+};
+#pragma pack(pop)
+static_assert(sizeof(Kfc4ContainerHeader) == 16, "Kfc4ContainerHeader must be 16 bytes");
+
 class DreamAssetBridge {
 public:
     struct AssetData {
@@ -94,6 +105,20 @@ public:
         m_assetOverrides.clear();
         m_locaTags.clear();
         DREAM_LOG_INFO("DreamAssetBridge: All dynamic asset overrides cleared cleanly");
+    }
+
+// ========================================================================
+    // KFC4 Container Header Validation (Keen Games Engine Format)
+    // ========================================================================
+    static bool IsValidKfc4Container(const void* data, size_t size) {
+        if (!data || size < sizeof(Kfc4ContainerHeader)) return false;
+        const auto* hdr = reinterpret_cast<const Kfc4ContainerHeader*>(data);
+        return hdr->magic == 0x3443464B; // "KFC4"
+    }
+
+    static uint32_t GetKfc4Version(const void* data, size_t size) {
+        if (!IsValidKfc4Container(data, size)) return 0;
+        return reinterpret_cast<const Kfc4ContainerHeader*>(data)->version;
     }
 
     size_t GetAssetOverrideCount() const {

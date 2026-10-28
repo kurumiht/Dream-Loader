@@ -128,6 +128,30 @@ DK_API bool DK_GetEntityPosition(void* pEntity, float* outX, float* outY, float*
 }
 
 // ============================================================================
+// 3D World Cursor & Crosshair Targeting Exports
+// ============================================================================
+DK_API bool DK_GetWorldCursorPosition(float* outX, float* outY, float* outZ) {
+    return dreamkurumi::DreamGameContext::Instance().GetWorldCursorPosition(outX, outY, outZ);
+}
+
+DK_API bool DK_GetWorldCursorRay(float* outOriginX, float* outOriginY, float* outOriginZ,
+                                 float* outDirX, float* outDirY, float* outDirZ) {
+    return dreamkurumi::DreamGameContext::Instance().GetWorldCursorRay(outOriginX, outOriginY, outOriginZ, outDirX, outDirY, outDirZ);
+}
+
+DK_API bool DK_GetWorldCursor(dreamkurumi::DreamWorldCursor* outCursor) {
+    if (!outCursor) return false;
+    *outCursor = dreamkurumi::DreamGameContext::Instance().GetWorldCursor();
+    return outCursor->isValid != 0;
+}
+
+DK_API void DK_SetWorldCursor(const dreamkurumi::DreamWorldCursor* inCursor) {
+    if (inCursor) {
+        dreamkurumi::DreamGameContext::Instance().SetWorldCursor(*inCursor);
+    }
+}
+
+// ============================================================================
 // Memory Patching (NOP & Direct Bytes)
 // ============================================================================
 DK_API void* DK_PatchBytes(void* target, const uint8_t* bytes, size_t count) {
@@ -324,6 +348,19 @@ DK_API void DK_Profiler_SetEnabled(bool enable) {
 // ============================================================================
 DK_API bool DK_Env_IsDedicatedServer() {
     return dreamkurumi::DreamEnv::IsDedicatedServer();
+}
+
+// Multi-Loader Coexistence & Linux Environment Exports
+DK_API bool DK_Env_IsWine() {
+    return dreamkurumi::IsRunningUnderWine();
+}
+
+DK_API bool DK_Hook_HasExistingHook(const void* target, uintptr_t* outDest) {
+    return dreamkurumi::DreamDisasm::HasExistingHook(target, outDest);
+}
+
+DK_API bool DK_Asset_IsValidKfc4(const void* data, size_t size) {
+    return dreamkurumi::DreamAssetBridge::IsValidKfc4Container(data, size);
 }
 
 DK_API bool DK_Env_IsClient() {

@@ -14,6 +14,38 @@ namespace dreamkurumi::enshrouded {
 
 #pragma pack(push, 1)
 
+// ============================================================================
+// 3D World Cursor & Crosshair Targeting (Enshrouded 1.0 Raycast Coordinates)
+// Discovered from Keen Engine world_cursor reflection ([R14 + 0x270])
+// ============================================================================
+#ifndef DREAM_WORLD_CURSOR_DEFINED
+#define DREAM_WORLD_CURSOR_DEFINED
+struct DreamWorldCursor {
+    float posX{0.0f};      // 0x00: 3D hit position X (in world meters)
+    float posY{0.0f};      // 0x04: 3D hit position Y
+    float posZ{0.0f};      // 0x08: 3D hit position Z
+    float dirX{0.0f};      // 0x0C: Ray direction vector X (normalized)
+    float dirY{0.0f};      // 0x10: Ray direction vector Y
+    float dirZ{0.0f};      // 0x14: Ray direction vector Z
+    float originX{0.0f};   // 0x18: Raycast origin X (camera/eye position)
+    float originY{0.0f};   // 0x1C: Raycast origin Y
+    float originZ{0.0f};   // 0x20: Raycast origin Z
+    float distance{0.0f};  // 0x24: Raycast hit distance / depth
+    uint32_t flags{0};     // 0x28: State flags (0x01 = hit surface, 0x02 = hit entity, etc.)
+    uint32_t sequence{0};  // 0x2C: Frame sequence counter
+    uint8_t isValid{0};    // 0x30: 1 if cursor points to a valid 3D hit location, 0 otherwise
+    uint8_t _pad[3]{0,0,0};// 0x31: Alignment padding
+};
+static_assert(sizeof(DreamWorldCursor) == 52, "DreamWorldCursor size must be 52 bytes");
+static_assert(offsetof(DreamWorldCursor, posX) == 0x00, "posX must be at 0x00");
+static_assert(offsetof(DreamWorldCursor, dirX) == 0x0C, "dirX must be at 0x0C");
+static_assert(offsetof(DreamWorldCursor, originX) == 0x18, "originX must be at 0x18");
+static_assert(offsetof(DreamWorldCursor, distance) == 0x24, "distance must be at 0x24");
+static_assert(offsetof(DreamWorldCursor, flags) == 0x28, "flags must be at 0x28");
+static_assert(offsetof(DreamWorldCursor, sequence) == 0x2C, "sequence must be at 0x2C");
+static_assert(offsetof(DreamWorldCursor, isValid) == 0x30, "isValid must be at 0x30");
+#endif
+
 // Random loot event (24 bytes) - chests, crates, interactive items
 struct RandomInteractionEvent {
     uint8_t pad0[8];        // 0x00 - 0x07
@@ -184,3 +216,7 @@ private:
 };
 
 } // namespace dreamkurumi::enshrouded
+
+namespace dreamkurumi {
+    using DreamWorldCursor = enshrouded::DreamWorldCursor;
+}

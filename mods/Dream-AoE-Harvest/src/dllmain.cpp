@@ -13,7 +13,7 @@
 // Dream AoE Harvest (Unified Dynamic Harmony Plugin - Client & Server)
 // Dedicated Farming Crop Gathering Mod (3.5m Radius, F8 Toggle)
 // Automatically adapts to Client (enshrouded.exe) and Dedicated Server (enshrouded_server.exe)
-// Enshrouded 1.0 Native Interaction Loop Batch Expansion (Hook 13A)
+// Enshrouded 1.0 (V1.0.0.3) Native Interaction Loop Batch Expansion (Hook 13A)
 // Universal Player Access by default (Rule 2)
 // ============================================================================
 
@@ -65,6 +65,7 @@ std::atomic<bool> g_initialized{false};
 std::atomic<bool> g_aoeHarvestEnabled{true};
 std::atomic<float> g_harvestRadius{3.5f};
 std::atomic<bool> g_sameCropOnly{false};
+std::atomic<bool> g_allowShiftVanilla{true};
 std::atomic<bool> g_adminOnly{false};       // Default false: Rule 2
 std::atomic<int> g_hotkeyHarvest{VK_F8};   // F8 toggle
 std::atomic<bool> g_audioFeedback{true};
@@ -80,6 +81,16 @@ FnGetEntity s_pfnGetEntity = nullptr;
 FnGetEntityComponent s_pfnGetComp = nullptr;
 uintptr_t s_baseModule = 0;
 bool s_isServer = false;
+
+// Saved original bytes for cleanup
+uint8_t s_origHookBytes[14] = {0};
+uint8_t s_origGuard1[6] = {0};
+uint8_t s_origGuard2[6] = {0};
+uint8_t s_origGuard3[6] = {0};
+uintptr_t s_hookRva = 0;
+uintptr_t s_guard1Rva = 0;
+uintptr_t s_guard2Rva = 0;
+uintptr_t s_guard3Rva = 0;
 
 struct CropCandidate {
     uint32_t entId;
@@ -120,7 +131,7 @@ bool GetEntityFixedPos(void* pEntity, int64_t& outX, int64_t& outZ) {
     return true;
 }
 
-void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t primaryCropId,
+void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, void* pPrimaryOffer, uint32_t primaryCropId,
                              float maxRadius, bool sameCropOnly,
                              std::vector<CropCandidate>& outCandidates) {
     outCandidates.clear();
@@ -150,6 +161,11 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t pri
     double maxRadiusSq = (double)(maxRadius * maxRadius);
     size_t numWords = (capacity + 63) >> 6;
 
+    uint32_t primaryVerb = 0;
+    if (pPrimaryOffer) {
+        SafeRead((char*)pPrimaryOffer + 0x10, primaryVerb);
+    }
+
     for (size_t w = 0; w < numWords; ++w) {
         uint64_t mask = 0;
         if (!SafeRead(&pBitmap[w], mask) || mask == 0) continue;
@@ -175,7 +191,14 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t pri
             s_pfnGetComp(outOffer, pEnt, &cOffer);
             if (!outOffer[0] || !IsValidPtr(outOffer[0])) continue;
 
-            // 2. Spatial distance check using Component 0x7d
+            // 2. Must match interaction verb (Harvest / Collect), preventing accidental doors/chests
+            if (primaryVerb != 0) {
+                uint32_t candVerb = 0;
+                SafeRead((char*)outOffer[0] + 0x10, candVerb);
+                if (candVerb != primaryVerb) continue;
+            }
+
+            // 3. Spatial distance check using Component 0x7d
             int64_t cX = 0, cZ = 0;
             if (!GetEntityFixedPos(pEnt, cX, cZ)) continue;
 
@@ -202,10 +225,14 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t pri
 done_search:;
 }
 
-bool InstallHook14(void* target, void* hookFunc) {
+bool InstallHook14(void* target, void* hookFunc, uint8_t* origBytesOut) {
     if (!target || !hookFunc) return false;
     DWORD oldProtect = 0;
     if (!VirtualProtect(target, 14, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+
+    if (origBytesOut) {
+        memcpy(origBytesOut, target, 14);
+    }
 
     // FF 25 00 00 00 00 [64-bit absolute target address]
     uint8_t jmpBytes[14] = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };
@@ -215,6 +242,45 @@ bool InstallHook14(void* target, void* hookFunc) {
     VirtualProtect(target, 14, oldProtect, &oldProtect);
     FlushInstructionCache(GetCurrentProcess(), target, 14);
     return true;
+}
+
+bool PatchMemoryNop(void* target, size_t size, uint8_t* origBytesOut) {
+    if (!target || size == 0) return false;
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(target, size, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+
+    if (origBytesOut) {
+        memcpy(origBytesOut, target, size);
+    }
+
+    memset(target, 0x90, size);
+
+    VirtualProtect(target, size, oldProtect, &oldProtect);
+    FlushInstructionCache(GetCurrentProcess(), target, size);
+    return true;
+}
+
+bool RestoreMemoryBytes(void* target, const uint8_t* origBytes, size_t size) {
+    if (!target || !origBytes || size == 0) return false;
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(target, size, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+
+    memcpy(target, origBytes, size);
+
+    VirtualProtect(target, size, oldProtect, &oldProtect);
+    FlushInstructionCache(GetCurrentProcess(), target, size);
+    return true;
+}
+
+void* ResolvePatternOrFallback(const char* symbolName, const char* pattern, uintptr_t fallbackRva) {
+    void* ptr = nullptr;
+    if (pattern && pattern[0] != '\0') {
+        ptr = dreamkurumi::ResolvePattern(symbolName, pattern, fallbackRva);
+    }
+    if (!ptr && fallbackRva != 0 && s_baseModule != 0) {
+        ptr = reinterpret_cast<void*>(s_baseModule + fallbackRva);
+    }
+    return ptr;
 }
 
 void LogMod(const char* fmt, ...) {
@@ -237,14 +303,17 @@ void LoadConfig() {
         g_aoeHarvestEnabled.store(toml.GetBool("AoEHarvest", "Enabled", true));
         g_harvestRadius.store(static_cast<float>(toml.GetFloat("AoEHarvest", "Radius", 3.5)));
         g_sameCropOnly.store(toml.GetBool("AoEHarvest", "SameCropOnly", false));
+        g_allowShiftVanilla.store(toml.GetBool("AoEHarvest", "AllowShiftVanilla", true));
         g_adminOnly.store(toml.GetBool("AoEHarvest", "AdminOnly", false));
 
         g_hotkeyHarvest.store(static_cast<int>(toml.GetInt("Hotkeys", "ToggleHotkey", VK_F8)));
         g_audioFeedback.store(toml.GetBool("Hotkeys", "AudioFeedback", true));
 
-        LogMod("[DreamAoEHarvest] TOML configuration applied: Enabled=%s (Radius=%.1fm, AdminOnly=%s, Hotkey=0x%X)",
+        LogMod("[DreamAoEHarvest] TOML configuration applied: Enabled=%s (Radius=%.1fm, SameCropOnly=%s, ShiftVanilla=%s, AdminOnly=%s, Hotkey=0x%X)",
                g_aoeHarvestEnabled.load() ? "ON" : "OFF",
                g_harvestRadius.load(),
+               g_sameCropOnly.load() ? "true" : "false",
+               g_allowShiftVanilla.load() ? "true" : "false",
                g_adminOnly.load() ? "true" : "false",
                g_hotkeyHarvest.load());
         return;
@@ -279,23 +348,25 @@ DWORD WINAPI HotkeyWorkerThread(LPVOID) {
         bool isGameFocused = (strstr(titleBuf, "Enshrouded") != nullptr || strstr(titleBuf, "enshrouded") != nullptr || s_isServer);
         if (isGameFocused) {
             int keyHarvest = g_hotkeyHarvest.load();
-            bool curF8 = (GetAsyncKeyState(keyHarvest) & 0x8000) != 0;
-            if (curF8 && !prevF8) {
-                bool newState = !g_aoeHarvestEnabled.load();
-                g_aoeHarvestEnabled.store(newState);
+            if (keyHarvest > 0) {
+                bool curF8 = (GetAsyncKeyState(keyHarvest) & 0x8000) != 0;
+                if (curF8 && !prevF8) {
+                    bool newState = !g_aoeHarvestEnabled.load();
+                    g_aoeHarvestEnabled.store(newState);
 
-                if (g_audioFeedback.load() && !s_isServer) {
-                    MessageBeep(newState ? MB_OK : MB_ICONHAND);
+                    if (g_audioFeedback.load() && !s_isServer) {
+                        MessageBeep(newState ? MB_OK : MB_ICONHAND);
+                    }
+
+                    char toastMsg[128];
+                    snprintf(toastMsg, sizeof(toastMsg), newState ? "AoE Harvest: ENABLED (%.1fm)" : "AoE Harvest: DISABLED", g_harvestRadius.load());
+                    dreamkurumi::ShowToast(toastMsg, 2.0f, newState ? 0x00FF88 : 0xFFAA00);
+
+                    LogMod("[DreamAoEHarvest] AoE Harvest toggled: %s (Radius: %.1fm)",
+                           newState ? "ENABLED [ON]" : "DISABLED [OFF]", g_harvestRadius.load());
                 }
-
-                char toastMsg[128];
-                snprintf(toastMsg, sizeof(toastMsg), newState ? "AoE Harvest: ENABLED (%.1fm)" : "AoE Harvest: DISABLED", g_harvestRadius.load());
-                dreamkurumi::ShowToast(toastMsg, 2.0f, newState ? 0x00FF88 : 0xFFAA00);
-
-                LogMod("[DreamAoEHarvest] AoE Harvest toggled: %s (Radius: %.1fm)",
-                       newState ? "ENABLED [ON]" : "DISABLED [OFF]", g_harvestRadius.load());
+                prevF8 = curF8;
             }
-            prevF8 = curF8;
         }
         Sleep(50);
     }
@@ -325,28 +396,55 @@ void InitMod() {
     s_isServer = (strstr(mainExe, "enshrouded_server") != nullptr);
 
     LogMod("==================================================================");
-    LogMod("  Dream AoE Harvest v1.2.0 (Unified Native Harmony Plugin)");
+    LogMod("  Dream AoE Harvest v1.3.0 (Unified Native Harmony Plugin)");
     LogMod("  Target: %s (Base: 0x%llX)", s_isServer ? "Dedicated Server (Headless)" : "Game Client", (unsigned long long)s_baseModule);
     LogMod("  Universal Player Access: %s (Rule 2)", g_adminOnly.load() ? "Admin-Only" : "ALL Connected Players");
     LogMod("==================================================================");
 
     LoadConfig();
 
-    uintptr_t hookRva = s_isServer ? 0x000A1241 : 0x002A2EE1;
-    uintptr_t resumeRva = s_isServer ? 0x000A124F : 0x002A2EEF;
-    uintptr_t getEntityRva = s_isServer ? 0x00647520 : 0x009A6CA0;
-    uintptr_t getCompRva = s_isServer ? 0x00654610 : 0x009B3D90;
+    const char* patHook13A = "41 8B 41 18 33 D2 45 33 C0 48 89 74 24 30 89 95 60 74 00 00 44 89 85 58 74 00 00";
+    const char* patGetEntity = "40 53 48 83 EC 20 48 8B 01 89 54 24 38 48 8D 54 24 38 48 8B 58 30 48 8D 8B 48 01 00 00";
+    const char* patGetComp = "4C 8B D2 4C 8B C9 4D 85 C0 74 5D 48 85 D2 74 58 45 0F B7 00 4C 8B 5A 18";
 
-    s_pfnGetEntity = (FnGetEntity)(s_baseModule + getEntityRva);
-    s_pfnGetComp = (FnGetEntityComponent)(s_baseModule + getCompRva);
-    pResumeExpandImmediateBatch = (void*)(s_baseModule + resumeRva);
+    uintptr_t fbHookRva = s_isServer ? 0x000A1241 : 0x002A2EE1;
+    uintptr_t fbGetEntityRva = s_isServer ? 0x00647520 : 0x009A6CA0;
+    uintptr_t fbGetCompRva = s_isServer ? 0x00654610 : 0x009B3D90;
 
-    void* hookSite = (void*)(s_baseModule + hookRva);
-    if (InstallHook14(hookSite, (void*)Hook_ExpandImmediateLootBatch_Relay)) {
-        LogMod("[DreamAoEHarvest] Hook 13A installed successfully at RVA 0x%llX (Resume=0x%llX)!",
-               (unsigned long long)hookRva, (unsigned long long)resumeRva);
+    void* hookSite = ResolvePatternOrFallback("Hook13A_ImmediateLoot", patHook13A, fbHookRva);
+    s_pfnGetEntity = (FnGetEntity)ResolvePatternOrFallback("GetEntity", patGetEntity, fbGetEntityRva);
+    s_pfnGetComp = (FnGetEntityComponent)ResolvePatternOrFallback("GetEntityComponent", patGetComp, fbGetCompRva);
+
+    if (hookSite) {
+        s_hookRva = reinterpret_cast<uintptr_t>(hookSite) - s_baseModule;
+        pResumeExpandImmediateBatch = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 14);
+
+        if (InstallHook14(hookSite, (void*)Hook_ExpandImmediateLootBatch_Relay, s_origHookBytes)) {
+            LogMod("[DreamAoEHarvest] Hook 13A installed successfully at %p (RVA 0x%llX, Resume=%p)!",
+                   hookSite, (unsigned long long)s_hookRva, pResumeExpandImmediateBatch);
+        } else {
+            LogMod("[DreamAoEHarvest] ERROR: Failed to install Hook 13A at %p!", hookSite);
+        }
+
+        // Relative engine validation guard checks (+0x157, +0x164, +0x175)
+        void* pGuard1 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x157);
+        void* pGuard2 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x164);
+        void* pGuard3 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x175);
+
+        s_guard1Rva = reinterpret_cast<uintptr_t>(pGuard1) - s_baseModule;
+        s_guard2Rva = reinterpret_cast<uintptr_t>(pGuard2) - s_baseModule;
+        s_guard3Rva = reinterpret_cast<uintptr_t>(pGuard3) - s_baseModule;
+
+        if (PatchMemoryNop(pGuard1, 6, s_origGuard1) &&
+            PatchMemoryNop(pGuard2, 6, s_origGuard2) &&
+            PatchMemoryNop(pGuard3, 6, s_origGuard3)) {
+            LogMod("[DreamAoEHarvest] Engine validation guard jumps successfully bypassed at %p, %p, %p (RVAs 0x%llX, 0x%llX, 0x%llX)!",
+                   pGuard1, pGuard2, pGuard3, (unsigned long long)s_guard1Rva, (unsigned long long)s_guard2Rva, (unsigned long long)s_guard3Rva);
+        } else {
+            LogMod("[DreamAoEHarvest] WARNING: Failed to bypass engine validation guard jumps!");
+        }
     } else {
-        LogMod("[DreamAoEHarvest] ERROR: Failed to install Hook 13A at RVA 0x%llX!", (unsigned long long)hookRva);
+        LogMod("[DreamAoEHarvest] CRITICAL ERROR: Could not resolve Hook 13A address!");
     }
 
     g_workerRunning.store(true);
@@ -362,6 +460,22 @@ void UnloadMod() {
         CloseHandle(g_hWorkerThread);
         g_hWorkerThread = NULL;
     }
+
+    if (s_baseModule != 0) {
+        if (s_hookRva != 0 && s_origHookBytes[0] != 0) {
+            RestoreMemoryBytes((void*)(s_baseModule + s_hookRva), s_origHookBytes, 14);
+        }
+        if (s_guard1Rva != 0 && s_origGuard1[0] != 0) {
+            RestoreMemoryBytes((void*)(s_baseModule + s_guard1Rva), s_origGuard1, 6);
+        }
+        if (s_guard2Rva != 0 && s_origGuard2[0] != 0) {
+            RestoreMemoryBytes((void*)(s_baseModule + s_guard2Rva), s_origGuard2, 6);
+        }
+        if (s_guard3Rva != 0 && s_origGuard3[0] != 0) {
+            RestoreMemoryBytes((void*)(s_baseModule + s_guard3Rva), s_origGuard3, 6);
+        }
+    }
+
     g_initialized.store(false);
 }
 
@@ -373,68 +487,93 @@ void OnExpandImmediateLootBatch(uint8_t* pRawChunk, void* pContext, EventBatch* 
     if (!pBatch || !pContext || !pRawChunk) return;
     if (!g_aoeHarvestEnabled.load()) return;
 
+    // Shift key bypass: hold Shift to harvest single crop (Vanilla mode)
+    if (g_allowShiftVanilla.load() && !s_isServer) {
+        if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) {
+            return;
+        }
+    }
+
     uint32_t count = pBatch->count;
     if (count == 0) return;
     if (!s_pfnGetEntity || !s_pfnGetComp) return;
 
-    uint32_t playerId = *(uint32_t*)(pRawChunk + 0x08);
-    uint32_t offerId = *(uint32_t*)(pRawChunk + 0x10);
+    // Verified layout from Enshrouded 1.0 (V1.0.0.3) assembly:
+    // Slot 0 (24 bytes):
+    // +0x10: playerId / guestId
+    // +0x14: primaryCropId
+    // +0x18: offerId
+    uint32_t playerId = *(uint32_t*)(pRawChunk + 0x10);
     uint32_t primaryCropId = *(uint32_t*)(pRawChunk + 0x14);
+    uint32_t offerId = *(uint32_t*)(pRawChunk + 0x18);
 
-    void* pPrimaryEntity = nullptr;
-    if (primaryCropId != 0) {
-        pPrimaryEntity = s_pfnGetEntity(pContext, primaryCropId);
-    }
-    if (!pPrimaryEntity || !IsValidPtr(pPrimaryEntity)) {
+    if (primaryCropId == 0) {
         uint32_t altId = *(uint32_t*)(pRawChunk + 0x0c);
-        if (altId != 0) {
-            pPrimaryEntity = s_pfnGetEntity(pContext, altId);
-            if (pPrimaryEntity && IsValidPtr(pPrimaryEntity)) {
-                primaryCropId = altId;
-            }
+        if (altId != 0 && s_pfnGetEntity(pContext, altId)) {
+            primaryCropId = altId;
         }
     }
-    if (!pPrimaryEntity || !IsValidPtr(pPrimaryEntity) || primaryCropId == 0) return;
+    if (primaryCropId == 0) return;
 
-    // Verify entity has Component 0x105 (InteractionOffer)
+    void* pPrimaryEntity = s_pfnGetEntity(pContext, primaryCropId);
+    if (!pPrimaryEntity || !IsValidPtr(pPrimaryEntity)) return;
+
+    // Verify entity has Component 0x105 (InteractionOfferRuntime - 56 bytes)
     uint16_t cOffer = 0x105;
     void* outPrimaryOffer[2] = { nullptr, nullptr };
     s_pfnGetComp(outPrimaryOffer, pPrimaryEntity, &cOffer);
     void* pPrimaryOffer = outPrimaryOffer[0];
     if (!pPrimaryOffer || !IsValidPtr(pPrimaryOffer)) return;
 
-    std::vector<CropCandidate> candidates;
-    FindNearbyCropCandidates(pContext, pPrimaryEntity, primaryCropId,
-                             g_harvestRadius.load(), g_sameCropOnly.load(), candidates);
-    if (candidates.empty()) return;
+    if (offerId == 0) {
+        SafeRead((char*)pPrimaryOffer + 0x28, offerId);
+    }
+    if (playerId == 0) {
+        SafeRead((char*)pPrimaryOffer + 0x18, playerId);
+    }
 
-    char acceptTemplate[32] = { 0 };
-    memcpy(acceptTemplate, (char*)pPrimaryOffer + 0x54, sizeof(acceptTemplate));
+    float radius = g_harvestRadius.load();
+    bool sameCrop = g_sameCropOnly.load();
+
+    std::vector<CropCandidate> candidates;
+    FindNearbyCropCandidates(pContext, pPrimaryEntity, pPrimaryOffer, primaryCropId,
+                             radius, sameCrop, candidates);
+    if (candidates.empty()) return;
 
     size_t countToExpand = candidates.size();
     if (countToExpand > 64) countToExpand = 64;
 
     for (size_t i = 0; i < countToExpand; ++i) {
         uint8_t* pTarget = pRawChunk + (1 + i) * 24;
+        
+        // Copy base event fields from slot 0
         memcpy(pTarget, pRawChunk, 24);
 
-        *(uint32_t*)(pTarget + 0x08) = playerId;
-        *(uint32_t*)(pTarget + 0x10) = offerId;
+        // Set engine event slots
+        *(uint32_t*)(pTarget + 0x10) = playerId;
         *(uint32_t*)(pTarget + 0x14) = candidates[i].entId;
+        *(uint32_t*)(pTarget + 0x18) = offerId;
+
+        // Legacy / alternate slot offsets
+        *(uint32_t*)(pTarget + 0x08) = playerId;
         *(uint32_t*)(pTarget + 0x0c) = candidates[i].entId;
 
+        // Candidate InteractionOfferRuntime (56 bytes)
         void* pCandOffer = candidates[i].pOfferComp;
         if (pCandOffer && IsValidPtr(pCandOffer)) {
-            memcpy((char*)pCandOffer + 0x54, acceptTemplate, sizeof(acceptTemplate));
-            *(uint32_t*)((char*)pCandOffer + 0x54) = playerId;
-            *(uint32_t*)((char*)pCandOffer + 0x60) = offerId;
+            memcpy(pCandOffer, pPrimaryOffer, 56);
+            *(uint8_t*)((char*)pCandOffer + 0x2D) = 1;        // isOffered = true
+            *(uint8_t*)((char*)pCandOffer + 0x2E) = 0;        // isDisabled = false
+            *(uint32_t*)((char*)pCandOffer + 0x28) = offerId; // offerId
+            *(uint32_t*)((char*)pCandOffer + 0x24) = offerId; // currentOfferId
+            *(uint32_t*)((char*)pCandOffer + 0x18) = playerId;// lastAcceptData
         }
     }
 
     pBatch->count = (uint32_t)(1 + countToExpand);
 
-    LogMod("[DreamAoEHarvest] >>> EXPANDED Crop Harvest for Player %u: 1 primary (%u) + %zu nearby crops (Total: %u crops in %.1fm radius)! <<<\n",
-           playerId, primaryCropId, countToExpand, pBatch->count, g_harvestRadius.load());
+    LogMod("[DreamAoEHarvest] >>> AoE Harvest: Expanded batch to %u crops (1 primary %u + %zu nearby, Player: %u, Radius: %.1fm) <<<",
+           pBatch->count, primaryCropId, countToExpand, playerId, radius);
 }
 
 extern "C" {
@@ -446,7 +585,7 @@ __declspec(dllexport) int XhlNativePluginQuery(XhlPluginQueryInfo* info) {
     info->abiVersion = 0x10000;
     strncpy(info->id, "dream-aoe-harvest", sizeof(info->id) - 1);
     strncpy(info->name, "Dream AoE Harvest (Unified)", sizeof(info->name) - 1);
-    strncpy(info->version, "1.2.0", sizeof(info->version) - 1);
+    strncpy(info->version, "1.3.0", sizeof(info->version) - 1);
     return 1;
 }
 

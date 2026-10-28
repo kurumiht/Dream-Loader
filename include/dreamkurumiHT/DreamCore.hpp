@@ -17,11 +17,11 @@ namespace dreamkurumi {
 //   "-rc"      : Release candidate after in-game live verification
 //   "" (clean) : Stable production release
 // ============================================================================
-#define DREAM_FRAMEWORK_VERSION       "3.8.0-beta"
+#define DREAM_FRAMEWORK_VERSION       "3.8.3"
 #define DREAM_FRAMEWORK_VERSION_MAJOR 3
 #define DREAM_FRAMEWORK_VERSION_MINOR 8
-#define DREAM_FRAMEWORK_VERSION_PATCH 0
-#define DREAM_FRAMEWORK_VERSION_TAG   "beta"
+#define DREAM_FRAMEWORK_VERSION_PATCH 3
+#define DREAM_FRAMEWORK_VERSION_TAG   ""
 
 // ============================================================================
 // Scoped VirtualProtect (RAII)

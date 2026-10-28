@@ -272,6 +272,20 @@ public:
     size_t GetTotalMutations() const { return m_totalMutations.load(); }
 
     // ========================================================================
+    // Chunk-Boundary Safe Partitioning Formula (8x8x8 Grid Alignment)
+    // Ensures spatial bounding boxes snap cleanly to 8-cell chunks (512 cells),
+    // preventing boundary mesh tearing and out-of-bounds voxel buffer reads.
+    // ========================================================================
+    static void AlignToChunkBoundary(int32_t low, int32_t high, int32_t& outAlignedLow, int32_t& outAlignedHigh) {
+        int64_t chunkLow = low / 8;
+        int64_t chunkHigh = high / 8;
+        if (low < 0 && (low % 8 != 0)) --chunkLow;
+        if (high > 0 && (high % 8 != 0)) ++chunkHigh;
+        outAlignedLow = static_cast<int32_t>(chunkLow * 8);
+        outAlignedHigh = static_cast<int32_t>(chunkHigh * 8);
+    }
+
+    // ========================================================================
     // High-Level Native Mining & Voxel Modification Dispatcher (Enshrouded 1.0)
     // Invokes the game's native mining_node_events pipeline (0x001A3E30 Server / 0x004013D0 Client)
     // Automatically triggers chunk dirty marking, visual remesh, loot spawning, and network sync.
