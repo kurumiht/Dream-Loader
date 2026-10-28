@@ -76,26 +76,34 @@ FILETIME g_lastConfigTime = {0, 0};
 
 typedef void* (*FnGetEntity)(void* pContext, uint32_t entityId);
 typedef void* (*FnGetEntityComponent)(void* outComponentTuple[2], void* pEntity, const uint16_t* pComponentIndex);
+typedef void* (*FnGetInteractionOffer)(void* outTuple, void* arg2, void* arg3, void* pEntity, void* compMgr);
 
 FnGetEntity s_pfnGetEntity = nullptr;
 FnGetEntityComponent s_pfnGetComp = nullptr;
+FnGetInteractionOffer s_origGetInteractionOffer = nullptr;
+void* s_hHookOffer = nullptr;
 uintptr_t s_baseModule = 0;
 bool s_isServer = false;
 
 // Saved original bytes for cleanup
 uint8_t s_origHookBytes[14] = {0};
+uint8_t s_origGuard0[6] = {0};
 uint8_t s_origGuard1[6] = {0};
 uint8_t s_origGuard2[6] = {0};
 uint8_t s_origGuard3[6] = {0};
 uintptr_t s_hookRva = 0;
+uintptr_t s_guard0Rva = 0;
 uintptr_t s_guard1Rva = 0;
 uintptr_t s_guard2Rva = 0;
 uintptr_t s_guard3Rva = 0;
 
+// Dynamic offer backup for AoE batch candidates
+uint8_t s_primaryOfferBackup[56] = {0};
+std::atomic<bool> s_hasPrimaryOffer{false};
+
 struct CropCandidate {
     uint32_t entId;
     void* pEntity;
-    void* pOfferComp;
     double distMeters;
 };
 
@@ -118,30 +126,61 @@ inline bool IsValidWorldPtr(void* p) {
     return (capacity >= 4 && capacity <= 10000000);
 }
 
-// Read fixed-point coordinates from Component 0x7d (SpatialTransform in Q32.32)
-bool GetEntityFixedPos(void* pEntity, int64_t& outX, int64_t& outZ) {
-    if (!pEntity || !s_pfnGetComp || !IsValidPtr(pEntity)) return false;
-    uint16_t cIdx = 0x7d; // Component 125
-    void* outComp[2] = { nullptr, nullptr };
-    s_pfnGetComp(outComp, pEntity, &cIdx);
-    if (!outComp[0] || !IsValidPtr(outComp[0])) return false;
-
-    if (!SafeRead((const char*)outComp[0] + 0x00, outX)) return false;
-    if (!SafeRead((const char*)outComp[0] + 0x10, outZ)) return false;
-    return true;
+// Hook for GetInteractionOffer:
+// Automatically captures the legitimate offer from the primary crop (Iteration 0)
+// and supplies it to all candidate crops in the AoE batch (Iterations 1..N)
+void* Hook_GetInteractionOffer(void* outTuple, void* arg2, void* arg3, void* pEntity, void* compMgr) {
+    void* result = s_origGetInteractionOffer ? s_origGetInteractionOffer(outTuple, arg2, arg3, pEntity, compMgr) : outTuple;
+    void** pTuple = reinterpret_cast<void**>(result);
+    if (pTuple) {
+        if (pTuple[0] != nullptr && IsValidPtr(pTuple[0])) {
+            // Genuine offer from primary crop! Save all 56 bytes.
+            memcpy(s_primaryOfferBackup, pTuple[0], sizeof(s_primaryOfferBackup));
+            s_hasPrimaryOffer.store(true);
+        } else if (pTuple[0] == nullptr && s_hasPrimaryOffer.load()) {
+            // Nearby candidate crop in AoE batch: supply the valid offer so engine processes it!
+            pTuple[0] = s_primaryOfferBackup;
+            pTuple[1] = s_primaryOfferBackup;
+        }
+    }
+    return result;
 }
 
-void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, void* pPrimaryOffer, uint32_t primaryCropId,
+// Read fixed-point coordinates (SpatialTransform: Component 0x085 in 1.0, 0x7D in legacy)
+bool GetEntityFixedPos(void* pEntity, int64_t& outX, int64_t& outZ) {
+    if (!pEntity || !s_pfnGetComp || !IsValidPtr(pEntity)) return false;
+    const uint16_t cIdxList[] = { 0x085, 0x7D, 0x084, 0x086 };
+    void* outComp[2] = { nullptr, nullptr };
+    for (uint16_t cIdx : cIdxList) {
+        outComp[0] = nullptr;
+        outComp[1] = nullptr;
+        s_pfnGetComp(outComp, pEntity, &cIdx);
+        if (outComp[0] && IsValidPtr(outComp[0])) {
+            int64_t x = 0, z = 0;
+            if (SafeRead((const char*)outComp[0] + 0x00, x) &&
+                SafeRead((const char*)outComp[0] + 0x10, z)) {
+                outX = x;
+                outZ = z;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t primaryCropId,
                              float maxRadius, bool sameCropOnly,
                              std::vector<CropCandidate>& outCandidates) {
     outCandidates.clear();
-    if (!pContext || !pPrimaryEntity || !s_pfnGetEntity || !s_pfnGetComp || maxRadius <= 0.0f) return;
+    if (!pContext || !pPrimaryEntity || !s_pfnGetEntity || maxRadius <= 0.0f) return;
 
     void* pPrimaryArch = nullptr;
     if (!SafeRead((char*)pPrimaryEntity + 0x18, pPrimaryArch) || !pPrimaryArch || !IsValidPtr(pPrimaryArch)) return;
 
     int64_t pX = 0, pZ = 0;
-    if (!GetEntityFixedPos(pPrimaryEntity, pX, pZ)) return;
+    if (!GetEntityFixedPos(pPrimaryEntity, pX, pZ)) {
+        return;
+    }
 
     void* pObj0 = nullptr;
     if (!SafeRead(pContext, pObj0) || !pObj0 || !IsValidPtr(pObj0)) return;
@@ -161,11 +200,6 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, void* pPrima
     double maxRadiusSq = (double)(maxRadius * maxRadius);
     size_t numWords = (capacity + 63) >> 6;
 
-    uint32_t primaryVerb = 0;
-    if (pPrimaryOffer) {
-        SafeRead((char*)pPrimaryOffer + 0x10, primaryVerb);
-    }
-
     for (size_t w = 0; w < numWords; ++w) {
         uint64_t mask = 0;
         if (!SafeRead(&pBitmap[w], mask) || mask == 0) continue;
@@ -183,22 +217,11 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, void* pPrima
 
             void* pArch = nullptr;
             if (!SafeRead((char*)pEnt + 0x18, pArch) || !pArch || !IsValidPtr(pArch)) continue;
-            if (sameCropOnly && pArch != pPrimaryArch) continue;
+            
+            // Safe crop filter: candidate crop must match the primary crop archetype!
+            if (pArch != pPrimaryArch) continue;
 
-            // 1. Must have InteractionOffer (Component 0x105 = 261)
-            uint16_t cOffer = 0x105;
-            void* outOffer[2] = { nullptr, nullptr };
-            s_pfnGetComp(outOffer, pEnt, &cOffer);
-            if (!outOffer[0] || !IsValidPtr(outOffer[0])) continue;
-
-            // 2. Must match interaction verb (Harvest / Collect), preventing accidental doors/chests
-            if (primaryVerb != 0) {
-                uint32_t candVerb = 0;
-                SafeRead((char*)outOffer[0] + 0x10, candVerb);
-                if (candVerb != primaryVerb) continue;
-            }
-
-            // 3. Spatial distance check using Component 0x7d
+            // Distance check
             int64_t cX = 0, cZ = 0;
             if (!GetEntityFixedPos(pEnt, cX, cZ)) continue;
 
@@ -215,7 +238,6 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, void* pPrima
             CropCandidate cand;
             cand.entId = entId;
             cand.pEntity = pEnt;
-            cand.pOfferComp = outOffer[0];
             cand.distMeters = std::sqrt(distSq);
 
             outCandidates.push_back(cand);
@@ -396,7 +418,7 @@ void InitMod() {
     s_isServer = (strstr(mainExe, "enshrouded_server") != nullptr);
 
     LogMod("==================================================================");
-    LogMod("  Dream AoE Harvest v1.3.0 (Unified Native Harmony Plugin)");
+    LogMod("  Dream AoE Harvest v1.3.1 (Unified Native Harmony Plugin)");
     LogMod("  Target: %s (Base: 0x%llX)", s_isServer ? "Dedicated Server (Headless)" : "Game Client", (unsigned long long)s_baseModule);
     LogMod("  Universal Player Access: %s (Rule 2)", g_adminOnly.load() ? "Admin-Only" : "ALL Connected Players");
     LogMod("==================================================================");
@@ -406,14 +428,26 @@ void InitMod() {
     const char* patHook13A = "41 8B 41 18 33 D2 45 33 C0 48 89 74 24 30 89 95 60 74 00 00 44 89 85 58 74 00 00";
     const char* patGetEntity = "40 53 48 83 EC 20 48 8B 01 89 54 24 38 48 8D 54 24 38 48 8B 58 30 48 8D 8B 48 01 00 00";
     const char* patGetComp = "4C 8B D2 4C 8B C9 4D 85 C0 74 5D 48 85 D2 74 58 45 0F B7 00 4C 8B 5A 18";
+    const char* patGetOffer = "40 53 48 83 EC 30 4C 89 4C 24 20 48 8B D9 4C 8B 4C 24 60 E8 18 00 00 00";
 
     uintptr_t fbHookRva = s_isServer ? 0x000A1241 : 0x002A2EE1;
     uintptr_t fbGetEntityRva = s_isServer ? 0x00647520 : 0x009A6CA0;
     uintptr_t fbGetCompRva = s_isServer ? 0x00654610 : 0x009B3D90;
+    uintptr_t fbGetOfferRva = s_isServer ? 0x00654690 : 0x009B3E10;
 
     void* hookSite = ResolvePatternOrFallback("Hook13A_ImmediateLoot", patHook13A, fbHookRva);
     s_pfnGetEntity = (FnGetEntity)ResolvePatternOrFallback("GetEntity", patGetEntity, fbGetEntityRva);
     s_pfnGetComp = (FnGetEntityComponent)ResolvePatternOrFallback("GetEntityComponent", patGetComp, fbGetCompRva);
+    void* pGetOffer = ResolvePatternOrFallback("GetInteractionOffer", patGetOffer, fbGetOfferRva);
+
+    if (pGetOffer) {
+        s_hHookOffer = dreamkurumi::InlineHook(pGetOffer, (void*)Hook_GetInteractionOffer, (void**)&s_origGetInteractionOffer);
+        if (s_hHookOffer) {
+            LogMod("[DreamAoEHarvest] Dynamic InteractionOffer relay hooked at %p (Orig=%p)!", pGetOffer, s_origGetInteractionOffer);
+        } else {
+            LogMod("[DreamAoEHarvest] WARNING: Failed to hook GetInteractionOffer at %p!", pGetOffer);
+        }
+    }
 
     if (hookSite) {
         s_hookRva = reinterpret_cast<uintptr_t>(hookSite) - s_baseModule;
@@ -426,20 +460,25 @@ void InitMod() {
             LogMod("[DreamAoEHarvest] ERROR: Failed to install Hook 13A at %p!", hookSite);
         }
 
-        // Relative engine validation guard checks (+0x157, +0x164, +0x175)
+        // Relative engine validation guard checks (+0x14D, +0x157, +0x164, +0x175)
+        void* pGuard0 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x14D);
         void* pGuard1 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x157);
         void* pGuard2 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x164);
         void* pGuard3 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x175);
 
+        s_guard0Rva = reinterpret_cast<uintptr_t>(pGuard0) - s_baseModule;
         s_guard1Rva = reinterpret_cast<uintptr_t>(pGuard1) - s_baseModule;
         s_guard2Rva = reinterpret_cast<uintptr_t>(pGuard2) - s_baseModule;
         s_guard3Rva = reinterpret_cast<uintptr_t>(pGuard3) - s_baseModule;
 
-        if (PatchMemoryNop(pGuard1, 6, s_origGuard1) &&
+        if (PatchMemoryNop(pGuard0, 6, s_origGuard0) &&
+            PatchMemoryNop(pGuard1, 6, s_origGuard1) &&
             PatchMemoryNop(pGuard2, 6, s_origGuard2) &&
             PatchMemoryNop(pGuard3, 6, s_origGuard3)) {
-            LogMod("[DreamAoEHarvest] Engine validation guard jumps successfully bypassed at %p, %p, %p (RVAs 0x%llX, 0x%llX, 0x%llX)!",
-                   pGuard1, pGuard2, pGuard3, (unsigned long long)s_guard1Rva, (unsigned long long)s_guard2Rva, (unsigned long long)s_guard3Rva);
+            LogMod("[DreamAoEHarvest] Engine validation guard jumps bypassed at %p, %p, %p, %p (RVAs 0x%llX, 0x%llX, 0x%llX, 0x%llX)!",
+                   pGuard0, pGuard1, pGuard2, pGuard3,
+                   (unsigned long long)s_guard0Rva, (unsigned long long)s_guard1Rva,
+                   (unsigned long long)s_guard2Rva, (unsigned long long)s_guard3Rva);
         } else {
             LogMod("[DreamAoEHarvest] WARNING: Failed to bypass engine validation guard jumps!");
         }
@@ -461,9 +500,20 @@ void UnloadMod() {
         g_hWorkerThread = NULL;
     }
 
+    if (s_hHookOffer) {
+        auto& host = dreamkurumi::PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Unhook) {
+            host.pfn_DK_Unhook(s_hHookOffer);
+        }
+        s_hHookOffer = nullptr;
+    }
+
     if (s_baseModule != 0) {
         if (s_hookRva != 0 && s_origHookBytes[0] != 0) {
             RestoreMemoryBytes((void*)(s_baseModule + s_hookRva), s_origHookBytes, 14);
+        }
+        if (s_guard0Rva != 0 && s_origGuard0[0] != 0) {
+            RestoreMemoryBytes((void*)(s_baseModule + s_guard0Rva), s_origGuard0, 6);
         }
         if (s_guard1Rva != 0 && s_origGuard1[0] != 0) {
             RestoreMemoryBytes((void*)(s_baseModule + s_guard1Rva), s_origGuard1, 6);
@@ -496,9 +546,8 @@ void OnExpandImmediateLootBatch(uint8_t* pRawChunk, void* pContext, EventBatch* 
 
     uint32_t count = pBatch->count;
     if (count == 0) return;
-    if (!s_pfnGetEntity || !s_pfnGetComp) return;
+    if (!s_pfnGetEntity) return;
 
-    // Verified layout from Enshrouded 1.0 (V1.0.0.3) assembly:
     // Slot 0 (24 bytes):
     // +0x10: playerId / guestId
     // +0x14: primaryCropId
@@ -518,25 +567,14 @@ void OnExpandImmediateLootBatch(uint8_t* pRawChunk, void* pContext, EventBatch* 
     void* pPrimaryEntity = s_pfnGetEntity(pContext, primaryCropId);
     if (!pPrimaryEntity || !IsValidPtr(pPrimaryEntity)) return;
 
-    // Verify entity has Component 0x105 (InteractionOfferRuntime - 56 bytes)
-    uint16_t cOffer = 0x105;
-    void* outPrimaryOffer[2] = { nullptr, nullptr };
-    s_pfnGetComp(outPrimaryOffer, pPrimaryEntity, &cOffer);
-    void* pPrimaryOffer = outPrimaryOffer[0];
-    if (!pPrimaryOffer || !IsValidPtr(pPrimaryOffer)) return;
-
-    if (offerId == 0) {
-        SafeRead((char*)pPrimaryOffer + 0x28, offerId);
-    }
-    if (playerId == 0) {
-        SafeRead((char*)pPrimaryOffer + 0x18, playerId);
-    }
+    // Reset primary offer backup flag so Iteration 0 captures fresh state
+    s_hasPrimaryOffer.store(false);
 
     float radius = g_harvestRadius.load();
     bool sameCrop = g_sameCropOnly.load();
 
     std::vector<CropCandidate> candidates;
-    FindNearbyCropCandidates(pContext, pPrimaryEntity, pPrimaryOffer, primaryCropId,
+    FindNearbyCropCandidates(pContext, pPrimaryEntity, primaryCropId,
                              radius, sameCrop, candidates);
     if (candidates.empty()) return;
 
@@ -557,17 +595,6 @@ void OnExpandImmediateLootBatch(uint8_t* pRawChunk, void* pContext, EventBatch* 
         // Legacy / alternate slot offsets
         *(uint32_t*)(pTarget + 0x08) = playerId;
         *(uint32_t*)(pTarget + 0x0c) = candidates[i].entId;
-
-        // Candidate InteractionOfferRuntime (56 bytes)
-        void* pCandOffer = candidates[i].pOfferComp;
-        if (pCandOffer && IsValidPtr(pCandOffer)) {
-            memcpy(pCandOffer, pPrimaryOffer, 56);
-            *(uint8_t*)((char*)pCandOffer + 0x2D) = 1;        // isOffered = true
-            *(uint8_t*)((char*)pCandOffer + 0x2E) = 0;        // isDisabled = false
-            *(uint32_t*)((char*)pCandOffer + 0x28) = offerId; // offerId
-            *(uint32_t*)((char*)pCandOffer + 0x24) = offerId; // currentOfferId
-            *(uint32_t*)((char*)pCandOffer + 0x18) = playerId;// lastAcceptData
-        }
     }
 
     pBatch->count = (uint32_t)(1 + countToExpand);
@@ -585,7 +612,7 @@ __declspec(dllexport) int XhlNativePluginQuery(XhlPluginQueryInfo* info) {
     info->abiVersion = 0x10000;
     strncpy(info->id, "dream-aoe-harvest", sizeof(info->id) - 1);
     strncpy(info->name, "Dream AoE Harvest (Unified)", sizeof(info->name) - 1);
-    strncpy(info->version, "1.3.0", sizeof(info->version) - 1);
+    strncpy(info->version, "1.3.1", sizeof(info->version) - 1);
     return 1;
 }
 
