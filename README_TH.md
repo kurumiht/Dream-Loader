@@ -10,13 +10,29 @@
   <a href="README.md">🇬🇧 <b>English</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
   <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-Core-v3.8.0.zip">
-    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.8.0%20(Plug%20%26%20Play)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.8.0" />
+    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.8.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.8.0 Framework" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-AoE-Harvest-v3.8.0.zip">
+    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--AoE--Harvest%20(Mod%20Plugin)-blue?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-AoE-Harvest Mod" />
   </a>
 </p>
 
 ---
 
 ## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (44 Master Capabilities)
+
+> [!NOTE]
+> ### 💬 ข้อความจากผู้พัฒนา / จุดประสงค์ของโปรเจกต์นี้
+> **ทำไมถึงสร้างโปรเจกต์นี้ขึ้นมา:**  
+> โปรเจกต์นี้ฉันทำขึ้นมาเพื่อนำมาใช้งานในเซิร์ฟเวอร์ม็อดและเกมของฉันเอง และฉันต้องการแบ่งปันสิ่งนี้ให้กับชุมชนคนเล่นเกม เผื่อว่าจะมีใครที่ต้องการนำไปใช้งานหรือนำไปพัฒนาต่อยอดครับ!  
+>
+> **การแยกไฟล์ดาวน์โหลด (`Dream-Core` กับ `Dream-AoE-Harvest`):**  
+> เพื่อป้องกันความสับสนสำหรับผู้ใช้งาน—โดยเฉพาะในกรณีที่คุณอาจจะมีม็อดตัวอื่นที่ทำงานคล้ายๆ กับเราอยู่แล้ว—จึงได้ทำการแยกไฟล์ Zip ดาวน์โหลดออกจากกันอย่างอิสระ:  
+> * 📦 **`Dream-Core-v3.8.0.zip`**: ตัวแกนหลักของ Harmony Hooking Engine และ Native Loader สำหรับ Enshrouded (ประกอบด้วย Header C++20, ตัว Loader, และ Template) จะไม่มีตัวม็อดเกมพ่วงไปด้วย  
+> * 🌾 **`Dream-AoE-Harvest-v3.8.0.zip`**: ตัวม็อด AoE Harvest (เกี่ยวพืชผลอัตโนมัติรอบตัว 3.5 เมตร, กดเปิด-ปิดด้วย `F8`) แยกไว้ต่างหาก สามารถดาวน์โหลดไปแตกไฟล์ลงโฟลเดอร์ `mods/` แล้วเปิดเล่นได้ทันที
+
+---
 
 1. **Declarative Harmony API (`Prefix` / `Postfix`)**
    - เขียน Hook ง่าย สะอาด ไม่ต้องจำ Opcode หรือคำนวณ `E9 JMP`

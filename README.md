@@ -10,13 +10,29 @@
   <a href="README.md">🇬🇧 <b>English (Default)</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
   <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-Core-v3.8.0.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.8.0%20(Plug%20%26%20Play)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.0" />
+    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.8.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.0 Framework" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.0/Dream-AoE-Harvest-v3.8.0.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20(Mod%20Plugin)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
   </a>
 </p>
 
 ---
 
 ## Overview
+
+> [!NOTE]
+> ### 💬 Author's Note & Purpose
+> **Why this project was made:**  
+> I originally developed this framework and mod for use on my own dedicated server and in my own gameplay. I'm sharing it openly with the modding community in case anyone else wants to use it, learn from it, or build their own mods with it!  
+>
+> **Separate Downloads (`Dream-Core` vs `Dream-AoE-Harvest`):**  
+> To avoid any confusion—especially if you already use or develop other mods similar to ours—the downloads are provided in two separate packages:  
+> * 📦 **`Dream-Core-v3.8.0.zip`**: The standalone core native Harmony framework engine and C-ABI plugin loader. Does not bundle gameplay mods.  
+> * 🌾 **`Dream-AoE-Harvest-v3.8.0.zip`**: The standalone AoE crop harvesting mod plugin (3.5m radius, F8 toggle), provided separately so you can freely plug it into your server or client `mods/` directory.
+
+---
 
 **dreamkurumiHT (Dream Core)** is an industrial-grade native modding and runtime hooking framework purpose-built for high-performance 64-bit games, specifically **Enshrouded (Keen Holistic Engine)**. It brings the declarative simplicity and elegance of C# Harmony into native **C++20, C# (.NET Native AOT), and LuaJIT 2.1**.
 
