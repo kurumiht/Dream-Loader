@@ -12,8 +12,11 @@
 // ============================================================================
 // Dream AoE Harvest (Unified Dynamic Harmony Plugin - Client & Server)
 // Dedicated Farming Crop Gathering Mod (3.5m Radius, F8 Toggle)
-// Automatically adapts to Client (enshrouded.exe) and Dedicated Server (enshrouded_server.exe)
-// Enshrouded 1.0 (V1.0.0.3) Native Interaction Loop Batch Expansion (Hook 13A)
+// Dual-Pipeline Architecture:
+// 1) immediate_loot_action (RVA 0x19FB4B Server / 0x3FD0EB Client):
+//    Native 128-byte event immediate collection loop for crops & ground loot.
+// 2) interaction_attempt (RVA 0x0A1241 Server / 0x2A2EE1 Client):
+//    Native 24-byte event general interaction offer loop with Guard bypass.
 // Universal Player Access by default (Rule 2)
 // ============================================================================
 
@@ -47,6 +50,13 @@ struct XhlPluginContext {
 };
 
 extern "C" {
+    // Pipeline 1: immediate_loot_action (128 bytes)
+    void* pResumeImmediateLootAction = nullptr;
+    void Hook_ImmediateLoot_Relay();
+    __attribute__((force_align_arg_pointer))
+    void OnExpandImmediateLootAction(void* pQueue, uint8_t* pRawChunk, void* pContext, void* pRbp);
+
+    // Pipeline 2: interaction_attempt (24 bytes)
     void* pResumeExpandImmediateBatch = nullptr;
     void Hook_ExpandImmediateLootBatch_Relay();
     __attribute__((force_align_arg_pointer))
@@ -86,18 +96,21 @@ uintptr_t s_baseModule = 0;
 bool s_isServer = false;
 
 // Saved original bytes for cleanup
+uint8_t s_origLootBytes[16] = {0};
 uint8_t s_origHookBytes[14] = {0};
 uint8_t s_origGuard0[6] = {0};
 uint8_t s_origGuard1[6] = {0};
 uint8_t s_origGuard2[6] = {0};
 uint8_t s_origGuard3[6] = {0};
+
+uintptr_t s_lootHookRva = 0;
 uintptr_t s_hookRva = 0;
 uintptr_t s_guard0Rva = 0;
 uintptr_t s_guard1Rva = 0;
 uintptr_t s_guard2Rva = 0;
 uintptr_t s_guard3Rva = 0;
 
-// Dynamic offer backup for AoE batch candidates
+// Dynamic offer backup for AoE batch candidates in Pipeline 2
 uint8_t s_primaryOfferBackup[56] = {0};
 std::atomic<bool> s_hasPrimaryOffer{false};
 
@@ -126,19 +139,15 @@ inline bool IsValidWorldPtr(void* p) {
     return (capacity >= 4 && capacity <= 10000000);
 }
 
-// Hook for GetInteractionOffer:
-// Automatically captures the legitimate offer from the primary crop (Iteration 0)
-// and supplies it to all candidate crops in the AoE batch (Iterations 1..N)
+// Hook for GetInteractionOffer (Pipeline 2)
 void* Hook_GetInteractionOffer(void* outTuple, void* arg2, void* arg3, void* pEntity, void* compMgr) {
     void* result = s_origGetInteractionOffer ? s_origGetInteractionOffer(outTuple, arg2, arg3, pEntity, compMgr) : outTuple;
     void** pTuple = reinterpret_cast<void**>(result);
     if (pTuple) {
         if (pTuple[0] != nullptr && IsValidPtr(pTuple[0])) {
-            // Genuine offer from primary crop! Save all 56 bytes.
             memcpy(s_primaryOfferBackup, pTuple[0], sizeof(s_primaryOfferBackup));
             s_hasPrimaryOffer.store(true);
         } else if (pTuple[0] == nullptr && s_hasPrimaryOffer.load()) {
-            // Nearby candidate crop in AoE batch: supply the valid offer so engine processes it!
             pTuple[0] = s_primaryOfferBackup;
             pTuple[1] = s_primaryOfferBackup;
         }
@@ -146,10 +155,10 @@ void* Hook_GetInteractionOffer(void* outTuple, void* arg2, void* arg3, void* pEn
     return result;
 }
 
-// Read fixed-point coordinates (SpatialTransform: Component 0x085 in 1.0, 0x7D in legacy)
+// Read fixed-point coordinates (SpatialTransform: Component 0x7D / 125)
 bool GetEntityFixedPos(void* pEntity, int64_t& outX, int64_t& outZ) {
     if (!pEntity || !s_pfnGetComp || !IsValidPtr(pEntity)) return false;
-    const uint16_t cIdxList[] = { 0x085, 0x7D, 0x084, 0x086 };
+    const uint16_t cIdxList[] = { 0x7D, 0x085, 0x084, 0x086 };
     void* outComp[2] = { nullptr, nullptr };
     for (uint16_t cIdx : cIdxList) {
         outComp[0] = nullptr;
@@ -218,8 +227,18 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t pri
             void* pArch = nullptr;
             if (!SafeRead((char*)pEnt + 0x18, pArch) || !pArch || !IsValidPtr(pArch)) continue;
             
-            // Safe crop filter: candidate crop must match the primary crop archetype!
-            if (pArch != pPrimaryArch) continue;
+            // Safe crop filter:
+            // If sameCropOnly: candidate crop must match the primary crop archetype!
+            // If !sameCropOnly: matches primary crop archetype OR has Harvestable crop bit in Word 1 (Bit 43)
+            if (sameCropOnly) {
+                if (pArch != pPrimaryArch) continue;
+            } else {
+                if (pArch != pPrimaryArch) {
+                    uint64_t compWord1 = 0;
+                    SafeRead((char*)pArch + 0x08, compWord1);
+                    if ((compWord1 & (1ULL << 43)) == 0) continue;
+                }
+            }
 
             // Distance check
             int64_t cX = 0, cZ = 0;
@@ -241,63 +260,78 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t pri
             cand.distMeters = std::sqrt(distSq);
 
             outCandidates.push_back(cand);
-            if (outCandidates.size() >= 64) goto done_search;
+            if (outCandidates.size() >= 32) goto done_search;
         }
     }
 done_search:;
 }
 
+bool InstallHook16(void* target, void* hookFunc, uint8_t* origBytesOut) {
+    if (!target || !hookFunc) return false;
+    DWORD oldProtect;
+    if (!VirtualProtect(target, 16, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    if (origBytesOut) {
+        memcpy(origBytesOut, target, 16);
+    }
+    // 14-byte indirect JMP: FF 25 00 00 00 00 <64-bit target> + 2x NOP
+    uint8_t jmpCode[16] = {
+        0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, // jmp qword ptr [rip+0]
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x90, 0x90                          // NOP padding to 16 bytes
+    };
+    *reinterpret_cast<void**>(&jmpCode[6]) = hookFunc;
+    memcpy(target, jmpCode, 16);
+    VirtualProtect(target, 16, oldProtect, &oldProtect);
+    FlushInstructionCache(GetCurrentProcess(), target, 16);
+    return true;
+}
+
 bool InstallHook14(void* target, void* hookFunc, uint8_t* origBytesOut) {
     if (!target || !hookFunc) return false;
-    DWORD oldProtect = 0;
+    DWORD oldProtect;
     if (!VirtualProtect(target, 14, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
-
     if (origBytesOut) {
         memcpy(origBytesOut, target, 14);
     }
-
-    // FF 25 00 00 00 00 [64-bit absolute target address]
-    uint8_t jmpBytes[14] = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };
-    memcpy(jmpBytes + 6, &hookFunc, sizeof(void*));
-    memcpy(target, jmpBytes, 14);
-
+    uint8_t jmpCode[14] = {
+        0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, // jmp qword ptr [rip+0]
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+    *reinterpret_cast<void**>(&jmpCode[6]) = hookFunc;
+    memcpy(target, jmpCode, 14);
     VirtualProtect(target, 14, oldProtect, &oldProtect);
     FlushInstructionCache(GetCurrentProcess(), target, 14);
     return true;
 }
 
-bool PatchMemoryNop(void* target, size_t size, uint8_t* origBytesOut) {
-    if (!target || size == 0) return false;
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(target, size, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
-
+bool PatchMemoryNop(void* target, size_t len, uint8_t* origBytesOut) {
+    if (!target || len == 0) return false;
+    DWORD oldProtect;
+    if (!VirtualProtect(target, len, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
     if (origBytesOut) {
-        memcpy(origBytesOut, target, size);
+        memcpy(origBytesOut, target, len);
     }
-
-    memset(target, 0x90, size);
-
-    VirtualProtect(target, size, oldProtect, &oldProtect);
-    FlushInstructionCache(GetCurrentProcess(), target, size);
+    memset(target, 0x90, len);
+    VirtualProtect(target, len, oldProtect, &oldProtect);
+    FlushInstructionCache(GetCurrentProcess(), target, len);
     return true;
 }
 
-bool RestoreMemoryBytes(void* target, const uint8_t* origBytes, size_t size) {
-    if (!target || !origBytes || size == 0) return false;
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(target, size, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
-
-    memcpy(target, origBytes, size);
-
-    VirtualProtect(target, size, oldProtect, &oldProtect);
-    FlushInstructionCache(GetCurrentProcess(), target, size);
+bool RestoreMemoryBytes(void* target, const uint8_t* origBytes, size_t len) {
+    if (!target || !origBytes || len == 0) return false;
+    DWORD oldProtect;
+    if (!VirtualProtect(target, len, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    memcpy(target, origBytes, len);
+    VirtualProtect(target, len, oldProtect, &oldProtect);
+    FlushInstructionCache(GetCurrentProcess(), target, len);
     return true;
 }
 
-void* ResolvePatternOrFallback(const char* symbolName, const char* pattern, uintptr_t fallbackRva) {
+void* ResolvePatternOrFallback(const char* name, const char* pattern, uintptr_t fallbackRva) {
     void* ptr = nullptr;
-    if (pattern && pattern[0] != '\0') {
-        ptr = dreamkurumi::ResolvePattern(symbolName, pattern, fallbackRva);
+    auto& host = dreamkurumi::PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_ResolvePattern) {
+        ptr = host.pfn_DK_ResolvePattern(name, pattern, fallbackRva);
     }
     if (!ptr && fallbackRva != 0 && s_baseModule != 0) {
         ptr = reinterpret_cast<void*>(s_baseModule + fallbackRva);
@@ -342,12 +376,11 @@ void LoadConfig() {
     }
 
     if (g_configPath.empty()) return;
+
     g_aoeHarvestEnabled.store(GetPrivateProfileIntA("Farming", "EnableAoeHarvest", 1, g_configPath.c_str()) != 0);
     char radBuf[32];
     GetPrivateProfileStringA("Farming", "AoeHarvestRadius", "3.5", radBuf, sizeof(radBuf), g_configPath.c_str());
-    float r = (float)atof(radBuf);
-    if (r <= 0.0f || r > 30.0f) r = 3.5f;
-    g_harvestRadius.store(r);
+    g_harvestRadius.store(static_cast<float>(atof(radBuf)));
 
     g_sameCropOnly.store(GetPrivateProfileIntA("Farming", "AoeHarvestSameCropOnly", 0, g_configPath.c_str()) != 0);
     g_adminOnly.store(GetPrivateProfileIntA("Farming", "AoeHarvestAdminOnly", 0, g_configPath.c_str()) != 0);
@@ -360,35 +393,60 @@ void LoadConfig() {
            g_hotkeyHarvest.load());
 }
 
+void CheckConfigFileChange() {
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExA(g_configPath.c_str(), GetFileExInfoStandard, &fad)) {
+        if (g_lastConfigTime.dwLowDateTime != 0 || g_lastConfigTime.dwHighDateTime != 0) {
+            if (CompareFileTime(&fad.ftLastWriteTime, &g_lastConfigTime) != 0) {
+                LogMod("[DreamAoEHarvest] config.ini modified on disk! Applying live hot-reload...");
+                g_lastConfigTime = fad.ftLastWriteTime;
+                LoadConfig();
+            }
+        } else {
+            g_lastConfigTime = fad.ftLastWriteTime;
+        }
+    }
+}
+
 DWORD WINAPI HotkeyWorkerThread(LPVOID) {
     bool prevF8 = false;
+    DWORD lastCheckTick = GetTickCount();
+
     while (g_workerRunning.load()) {
+        DWORD now = GetTickCount();
+        if (now - lastCheckTick >= 1000) {
+            CheckConfigFileChange();
+            lastCheckTick = now;
+        }
+
         HWND fgWnd = GetForegroundWindow();
         char titleBuf[128] = {0};
-        if (fgWnd) GetWindowTextA(fgWnd, titleBuf, sizeof(titleBuf));
+        if (fgWnd) {
+            GetWindowTextA(fgWnd, titleBuf, sizeof(titleBuf));
+        }
 
-        bool isGameFocused = (strstr(titleBuf, "Enshrouded") != nullptr || strstr(titleBuf, "enshrouded") != nullptr || s_isServer);
+        bool isGameFocused = (strstr(titleBuf, "Enshrouded") != nullptr || strstr(titleBuf, "enshrouded") != nullptr);
+
         if (isGameFocused) {
             int keyHarvest = g_hotkeyHarvest.load();
-            if (keyHarvest > 0) {
-                bool curF8 = (GetAsyncKeyState(keyHarvest) & 0x8000) != 0;
-                if (curF8 && !prevF8) {
-                    bool newState = !g_aoeHarvestEnabled.load();
-                    g_aoeHarvestEnabled.store(newState);
+            bool curF8 = (GetAsyncKeyState(keyHarvest) & 0x8000) != 0;
 
-                    if (g_audioFeedback.load() && !s_isServer) {
-                        MessageBeep(newState ? MB_OK : MB_ICONHAND);
-                    }
+            if (curF8 && !prevF8) {
+                bool newState = !g_aoeHarvestEnabled.load();
+                g_aoeHarvestEnabled.store(newState);
 
-                    char toastMsg[128];
-                    snprintf(toastMsg, sizeof(toastMsg), newState ? "AoE Harvest: ENABLED (%.1fm)" : "AoE Harvest: DISABLED", g_harvestRadius.load());
-                    dreamkurumi::ShowToast(toastMsg, 2.0f, newState ? 0x00FF88 : 0xFFAA00);
-
-                    LogMod("[DreamAoEHarvest] AoE Harvest toggled: %s (Radius: %.1fm)",
-                           newState ? "ENABLED [ON]" : "DISABLED [OFF]", g_harvestRadius.load());
+                if (g_audioFeedback.load()) {
+                    MessageBeep(newState ? MB_OK : MB_ICONHAND);
                 }
-                prevF8 = curF8;
+
+                char toastMsg[128];
+                snprintf(toastMsg, sizeof(toastMsg), newState ? "AoE Harvest: ENABLED (%.1fm)" : "AoE Harvest: DISABLED", g_harvestRadius.load());
+                dreamkurumi::ShowToast(toastMsg, 2.0f, newState ? 0x00FF88 : 0xFFAA00);
+
+                LogMod("[DreamAoEHarvest] AoE Harvest toggled: %s (Radius: %.1fm)",
+                       newState ? "ENABLED [ON]" : "DISABLED [OFF]", g_harvestRadius.load());
             }
+            prevF8 = curF8;
         }
         Sleep(50);
     }
@@ -410,7 +468,7 @@ void InitMod() {
     } else {
         g_modDirectory = ".\\";
     }
-    g_configPath = g_modDirectory + "config.ini";
+    g_configPath = g_modDirectory + "config.toml";
 
     s_baseModule = reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr));
     char mainExe[MAX_PATH] = {0};
@@ -418,53 +476,73 @@ void InitMod() {
     s_isServer = (strstr(mainExe, "enshrouded_server") != nullptr);
 
     LogMod("==================================================================");
-    LogMod("  Dream AoE Harvest v1.3.1 (Unified Native Harmony Plugin)");
+    LogMod("  Dream AoE Harvest v1.4.0 (Dual-Pipeline Harmony Native Plugin)");
     LogMod("  Target: %s (Base: 0x%llX)", s_isServer ? "Dedicated Server (Headless)" : "Game Client", (unsigned long long)s_baseModule);
-    LogMod("  Universal Player Access: %s (Rule 2)", g_adminOnly.load() ? "Admin-Only" : "ALL Connected Players");
+    LogMod("  Universal Player Access: ALL Connected Players (Rule 2)");
+    LogMod("  Farming Crop Gathering Radius: %.1fm | Toggle: [F8]", g_harvestRadius.load());
     LogMod("==================================================================");
 
     LoadConfig();
 
-    const char* patHook13A = "41 8B 41 18 33 D2 45 33 C0 48 89 74 24 30 89 95 60 74 00 00 44 89 85 58 74 00 00";
-    const char* patGetEntity = "40 53 48 83 EC 20 48 8B 01 89 54 24 38 48 8D 54 24 38 48 8B 58 30 48 8D 8B 48 01 00 00";
-    const char* patGetComp = "4C 8B D2 4C 8B C9 4D 85 C0 74 5D 48 85 D2 74 58 45 0F B7 00 4C 8B 5A 18";
-    const char* patGetOffer = "40 53 48 83 EC 30 4C 89 4C 24 20 48 8B D9 4C 8B 4C 24 60 E8 18 00 00 00";
+    // Signatures
+    const char* patLootAction = "41 8B 41 18 41 8B D2 89 95 68 74 00 00 45 8B C2";
+    const char* patHook13A    = "41 8B 41 18 33 D2 45 33 C0 48 89 74 24 30";
+    const char* patGetEntity  = "40 53 48 83 EC 20 48 8B 01 89 54 24 38 48 8D 54 24 38 48 8B 58 30 48 8D 8B 48 01 00 00";
+    const char* patGetComp    = "4C 8B D2 4C 8B C9 4D 85 C0 74 5D 48 85 D2 74 58 45 0F B7 00 4C 8B 5A 18";
+    const char* patGetOffer   = "40 53 48 83 EC 30 4C 89 4C 24 20 48 8B D9 4C 8B 4C 24 60 E8 18 00 00 00";
 
-    uintptr_t fbHookRva = s_isServer ? 0x000A1241 : 0x002A2EE1;
+    uintptr_t fbLootRva      = s_isServer ? 0x0019FB4B : 0x003FD0EB;
+    uintptr_t fbHookRva      = s_isServer ? 0x000A1241 : 0x002A2EE1;
     uintptr_t fbGetEntityRva = s_isServer ? 0x00647520 : 0x009A6CA0;
-    uintptr_t fbGetCompRva = s_isServer ? 0x00654610 : 0x009B3D90;
-    uintptr_t fbGetOfferRva = s_isServer ? 0x00654690 : 0x009B3E10;
+    uintptr_t fbGetCompRva   = s_isServer ? 0x00654610 : 0x009B3D90;
+    uintptr_t fbGetOfferRva  = s_isServer ? 0x00654690 : 0x009B3E10;
 
-    void* hookSite = ResolvePatternOrFallback("Hook13A_ImmediateLoot", patHook13A, fbHookRva);
+    // Helper functions
     s_pfnGetEntity = (FnGetEntity)ResolvePatternOrFallback("GetEntity", patGetEntity, fbGetEntityRva);
     s_pfnGetComp = (FnGetEntityComponent)ResolvePatternOrFallback("GetEntityComponent", patGetComp, fbGetCompRva);
     void* pGetOffer = ResolvePatternOrFallback("GetInteractionOffer", patGetOffer, fbGetOfferRva);
 
-    if (pGetOffer) {
-        s_hHookOffer = dreamkurumi::InlineHook(pGetOffer, (void*)Hook_GetInteractionOffer, (void**)&s_origGetInteractionOffer);
-        if (s_hHookOffer) {
-            LogMod("[DreamAoEHarvest] Dynamic InteractionOffer relay hooked at %p (Orig=%p)!", pGetOffer, s_origGetInteractionOffer);
+    LogMod("[DreamAoEHarvest] Resolved native helpers: GetEntity=%p, GetComp=%p, GetOffer=%p",
+           (void*)s_pfnGetEntity, (void*)s_pfnGetComp, pGetOffer);
+
+    // ------------------------------------------------------------------------
+    // Pipeline 1: immediate_loot_action (128-byte event buffer) - Primary Crop Harvesting
+    // ------------------------------------------------------------------------
+    void* lootSite = ResolvePatternOrFallback("immediate_loot_action", patLootAction, fbLootRva);
+    if (lootSite) {
+        s_lootHookRva = reinterpret_cast<uintptr_t>(lootSite) - s_baseModule;
+        pResumeImmediateLootAction = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(lootSite) + 16);
+
+        if (InstallHook16(lootSite, (void*)Hook_ImmediateLoot_Relay, s_origLootBytes)) {
+            LogMod("[DreamAoEHarvest] Pipeline 1 (immediate_loot_action) Hook installed successfully at %p (RVA 0x%llX, Resume=%p)!",
+                   lootSite, (unsigned long long)s_lootHookRva, pResumeImmediateLootAction);
         } else {
-            LogMod("[DreamAoEHarvest] WARNING: Failed to hook GetInteractionOffer at %p!", pGetOffer);
+            LogMod("[DreamAoEHarvest] ERROR: Failed to install Pipeline 1 hook at %p!", lootSite);
         }
+    } else {
+        LogMod("[DreamAoEHarvest] WARNING: Could not resolve immediate_loot_action address!");
     }
 
-    if (hookSite) {
-        s_hookRva = reinterpret_cast<uintptr_t>(hookSite) - s_baseModule;
-        pResumeExpandImmediateBatch = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 14);
+    // ------------------------------------------------------------------------
+    // Pipeline 2: interaction_attempt (24-byte event buffer) - General Interactions & Guard Bypass
+    // ------------------------------------------------------------------------
+    void* hookSite13A = ResolvePatternOrFallback("Hook13A_ImmediateLoot", patHook13A, fbHookRva);
+    if (hookSite13A) {
+        s_hookRva = reinterpret_cast<uintptr_t>(hookSite13A) - s_baseModule;
+        pResumeExpandImmediateBatch = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite13A) + 14);
 
-        if (InstallHook14(hookSite, (void*)Hook_ExpandImmediateLootBatch_Relay, s_origHookBytes)) {
-            LogMod("[DreamAoEHarvest] Hook 13A installed successfully at %p (RVA 0x%llX, Resume=%p)!",
-                   hookSite, (unsigned long long)s_hookRva, pResumeExpandImmediateBatch);
+        if (InstallHook14(hookSite13A, (void*)Hook_ExpandImmediateLootBatch_Relay, s_origHookBytes)) {
+            LogMod("[DreamAoEHarvest] Pipeline 2 (interaction_attempt) Hook installed successfully at %p (RVA 0x%llX, Resume=%p)!",
+                   hookSite13A, (unsigned long long)s_hookRva, pResumeExpandImmediateBatch);
         } else {
-            LogMod("[DreamAoEHarvest] ERROR: Failed to install Hook 13A at %p!", hookSite);
+            LogMod("[DreamAoEHarvest] ERROR: Failed to install Pipeline 2 hook at %p!", hookSite13A);
         }
 
         // Relative engine validation guard checks (+0x14D, +0x157, +0x164, +0x175)
-        void* pGuard0 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x14D);
-        void* pGuard1 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x157);
-        void* pGuard2 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x164);
-        void* pGuard3 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite) + 0x175);
+        void* pGuard0 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite13A) + 0x14D);
+        void* pGuard1 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite13A) + 0x157);
+        void* pGuard2 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite13A) + 0x164);
+        void* pGuard3 = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hookSite13A) + 0x175);
 
         s_guard0Rva = reinterpret_cast<uintptr_t>(pGuard0) - s_baseModule;
         s_guard1Rva = reinterpret_cast<uintptr_t>(pGuard1) - s_baseModule;
@@ -482,8 +560,14 @@ void InitMod() {
         } else {
             LogMod("[DreamAoEHarvest] WARNING: Failed to bypass engine validation guard jumps!");
         }
-    } else {
-        LogMod("[DreamAoEHarvest] CRITICAL ERROR: Could not resolve Hook 13A address!");
+    }
+
+    if (pGetOffer) {
+        s_hHookOffer = dreamkurumi::InlineHook(pGetOffer, (void*)Hook_GetInteractionOffer, (void**)&s_origGetInteractionOffer);
+        if (s_hHookOffer) {
+            LogMod("[DreamAoEHarvest] Dynamic InteractionOffer relay hooked at %p (Orig=%p)!",
+                   pGetOffer, s_origGetInteractionOffer);
+        }
     }
 
     g_workerRunning.store(true);
@@ -509,6 +593,9 @@ void UnloadMod() {
     }
 
     if (s_baseModule != 0) {
+        if (s_lootHookRva != 0 && s_origLootBytes[0] != 0) {
+            RestoreMemoryBytes((void*)(s_baseModule + s_lootHookRva), s_origLootBytes, 16);
+        }
         if (s_hookRva != 0 && s_origHookBytes[0] != 0) {
             RestoreMemoryBytes((void*)(s_baseModule + s_hookRva), s_origHookBytes, 14);
         }
@@ -531,6 +618,82 @@ void UnloadMod() {
 
 } // namespace
 
+// ============================================================================
+// Pipeline 1 Handler: immediate_loot_action (128-byte event buffer)
+// ============================================================================
+extern "C" __attribute__((force_align_arg_pointer))
+void OnExpandImmediateLootAction(void* pQueue, uint8_t* pRawChunk, void* pContext, void* pRbp) {
+    (void)pRbp;
+    if (!pQueue || !pRawChunk || !pContext) return;
+    if (!g_aoeHarvestEnabled.load()) return;
+
+    // Shift key bypass: hold Shift to harvest single crop (Vanilla mode)
+    if (g_allowShiftVanilla.load() && !s_isServer) {
+        if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) {
+            return;
+        }
+    }
+
+    uint32_t count = *(uint32_t*)((char*)pQueue + 0x18);
+    if (count == 0) return;
+    if (!s_pfnGetEntity) return;
+
+    uint32_t primaryCropId = *(uint32_t*)(pRawChunk + 0x14);
+    if (primaryCropId == 0) {
+        primaryCropId = *(uint32_t*)(pRawChunk + 0x0c);
+    }
+    if (primaryCropId == 0) return;
+
+    void* pPrimaryEntity = s_pfnGetEntity(pContext, primaryCropId);
+    if (!pPrimaryEntity || !IsValidPtr(pPrimaryEntity)) return;
+
+    uint32_t playerId = *(uint32_t*)(pRawChunk + 0x10);
+    if (playerId == 0) {
+        playerId = *(uint32_t*)(pRawChunk + 0x08);
+    }
+
+    float radius = g_harvestRadius.load();
+    bool sameCrop = g_sameCropOnly.load();
+
+    std::vector<CropCandidate> candidates;
+    FindNearbyCropCandidates(pContext, pPrimaryEntity, primaryCropId,
+                             radius, sameCrop, candidates);
+    if (candidates.empty()) {
+        LogMod("[DreamAoEHarvest] Single crop harvest: EntId=%u (no nearby crops within %.1fm)",
+               primaryCropId, radius);
+        return;
+    }
+
+    // Max 14 candidates (1 primary + 14 = 15 total, strictly fits inside 2048-byte single chunk buffer)
+    size_t countToExpand = candidates.size();
+    if (countToExpand > 14) countToExpand = 14;
+
+    for (size_t i = 0; i < countToExpand; ++i) {
+        uint8_t* pTarget = pRawChunk + (1 + i) * 128;
+        memcpy(pTarget, pRawChunk, 128);
+
+        *(uint32_t*)(pTarget + 0x14) = candidates[i].entId;
+        *(uint32_t*)(pTarget + 0x0c) = candidates[i].entId;
+        *(uint32_t*)(pTarget + 0x10) = playerId;
+        *(uint32_t*)(pTarget + 0x08) = playerId;
+
+        // Bypass validation checks
+        *(uint8_t*)(pTarget + 0x00) = 1;
+        *(uint8_t*)(pTarget + 0x78) = 1;
+        *(uint8_t*)(pTarget + 0x80) = 1;
+    }
+
+    *(uint8_t*)(pRawChunk + (1 + countToExpand) * 128) = 1;
+
+    *(uint32_t*)((char*)pQueue + 0x18) = (uint32_t)(1 + countToExpand);
+
+    LogMod("[DreamAoEHarvest] >>> AoE Harvest (immediate_loot_action): Expanded batch to %u crops (1 primary %u + %zu nearby, Player: %u, Radius: %.1fm) <<<",
+           (uint32_t)(1 + countToExpand), primaryCropId, countToExpand, playerId, radius);
+}
+
+// ============================================================================
+// Pipeline 2 Handler: interaction_attempt (24-byte event buffer)
+// ============================================================================
 extern "C" __attribute__((force_align_arg_pointer))
 void OnExpandImmediateLootBatch(uint8_t* pRawChunk, void* pContext, EventBatch* pBatch, void* pRbp) {
     (void)pRbp;
@@ -579,27 +742,24 @@ void OnExpandImmediateLootBatch(uint8_t* pRawChunk, void* pContext, EventBatch* 
     if (candidates.empty()) return;
 
     size_t countToExpand = candidates.size();
-    if (countToExpand > 64) countToExpand = 64;
+    if (countToExpand > 32) countToExpand = 32;
 
     for (size_t i = 0; i < countToExpand; ++i) {
         uint8_t* pTarget = pRawChunk + (1 + i) * 24;
         
-        // Copy base event fields from slot 0
         memcpy(pTarget, pRawChunk, 24);
 
-        // Set engine event slots
         *(uint32_t*)(pTarget + 0x10) = playerId;
         *(uint32_t*)(pTarget + 0x14) = candidates[i].entId;
         *(uint32_t*)(pTarget + 0x18) = offerId;
 
-        // Legacy / alternate slot offsets
         *(uint32_t*)(pTarget + 0x08) = playerId;
         *(uint32_t*)(pTarget + 0x0c) = candidates[i].entId;
     }
 
     pBatch->count = (uint32_t)(1 + countToExpand);
 
-    LogMod("[DreamAoEHarvest] >>> AoE Harvest: Expanded batch to %u crops (1 primary %u + %zu nearby, Player: %u, Radius: %.1fm) <<<",
+    LogMod("[DreamAoEHarvest] >>> AoE Harvest (interaction_attempt): Expanded batch to %u crops (1 primary %u + %zu nearby, Player: %u, Radius: %.1fm) <<<",
            pBatch->count, primaryCropId, countToExpand, playerId, radius);
 }
 
@@ -611,8 +771,8 @@ __declspec(dllexport) int XhlNativePluginQuery(XhlPluginQueryInfo* info) {
     info->structSize = sizeof(XhlPluginQueryInfo);
     info->abiVersion = 0x10000;
     strncpy(info->id, "dream-aoe-harvest", sizeof(info->id) - 1);
-    strncpy(info->name, "Dream AoE Harvest (Unified)", sizeof(info->name) - 1);
-    strncpy(info->version, "1.3.1", sizeof(info->version) - 1);
+    strncpy(info->name, "Dream AoE Harvest (Dual Pipeline)", sizeof(info->name) - 1);
+    strncpy(info->version, "1.4.0", sizeof(info->version) - 1);
     return 1;
 }
 
