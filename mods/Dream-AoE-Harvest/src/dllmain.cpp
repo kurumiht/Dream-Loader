@@ -266,8 +266,18 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t pri
 done_search:;
 }
 
+void LogMod(const char* fmt, ...);
+
 bool InstallHook16(void* target, void* hookFunc, uint8_t* origBytesOut) {
     if (!target || !hookFunc) return false;
+
+    uint8_t* pT = reinterpret_cast<uint8_t*>(target);
+    if (pT[0] == 0xFF && pT[1] == 0x25 && *(uint32_t*)(pT + 2) == 0) {
+        void* existingDetour = *reinterpret_cast<void**>(pT + 6);
+        pResumeImmediateLootAction = existingDetour;
+        LogMod("[DreamAoEHarvest] Chaining onto existing hook at %p -> Detour %p", target, existingDetour);
+    }
+
     DWORD oldProtect;
     if (!VirtualProtect(target, 16, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
     if (origBytesOut) {
@@ -288,6 +298,14 @@ bool InstallHook16(void* target, void* hookFunc, uint8_t* origBytesOut) {
 
 bool InstallHook14(void* target, void* hookFunc, uint8_t* origBytesOut) {
     if (!target || !hookFunc) return false;
+
+    uint8_t* pT = reinterpret_cast<uint8_t*>(target);
+    if (pT[0] == 0xFF && pT[1] == 0x25 && *(uint32_t*)(pT + 2) == 0) {
+        void* existingDetour = *reinterpret_cast<void**>(pT + 6);
+        pResumeExpandImmediateBatch = existingDetour;
+        LogMod("[DreamAoEHarvest] Chaining onto existing hook at %p -> Detour %p", target, existingDetour);
+    }
+
     DWORD oldProtect;
     if (!VirtualProtect(target, 14, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
     if (origBytesOut) {
