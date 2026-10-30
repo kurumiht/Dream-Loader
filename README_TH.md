@@ -13,8 +13,12 @@
     <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.8.4%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.8.4 Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Dream-AoE-Harvest-v3.8.4.zip">
-    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--AoE--Harvest%20(Mod%20Plugin)-blue?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-AoE-Harvest Mod" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Dream-AoE-Harvest-v1.4.0.zip">
+    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--AoE--Harvest%20v1.4.0%20(Mod)-blue?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-AoE-Harvest Mod" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Enshrouded-v1.0.0.3-Build-1273043-SDK-Dump.zip">
+    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Enshrouded%20SDK%20Dump%20(Build%201273043)-orange?style=for-the-badge&logo=code" alt="ดาวน์โหลด Enshrouded SDK Dump" />
   </a>
 </p>
 
@@ -30,7 +34,8 @@
 > **การแยกไฟล์ดาวน์โหลด (`Dream-Core` กับ `Dream-AoE-Harvest`):**  
 > เพื่อป้องกันความสับสนสำหรับผู้ใช้งาน—โดยเฉพาะในกรณีที่คุณอาจจะมีม็อดตัวอื่นที่ทำงานคล้ายๆ กับเราอยู่แล้ว—จึงได้ทำการแยกไฟล์ Zip ดาวน์โหลดออกจากกันอย่างอิสระ:  
 > * 📦 **`Dream-Core-v3.8.4.zip`**: ตัวแกนหลักของ Harmony Hooking Engine และ Native Loader สำหรับ Enshrouded (ประกอบด้วย Header C++20, ตัว Loader, และ Template) จะไม่มีตัวม็อดเกมพ่วงไปด้วย  
-> * 🌾 **`Dream-AoE-Harvest-v3.8.4.zip`**: ตัวม็อด AoE Harvest (เกี่ยวพืชผลอัตโนมัติรอบตัว 3.5 เมตร, กดเปิด-ปิดด้วย `F8`) แยกไว้ต่างหาก สามารถดาวน์โหลดไปแตกไฟล์ลงโฟลเดอร์ `mods/` แล้วเปิดเล่นได้ทันที
+> * 🌾 **`Dream-AoE-Harvest-v1.4.0.zip`**: ตัวม็อด AoE Harvest (เวอร์ชัน v1.4.0 เกี่ยวพืชผลอัตโนมัติรอบตัว 3.5 เมตร, กดเปิด-ปิดด้วย `F8`) แยกไว้ต่างหาก พร้อมระบบป้องกันการเปิดกล่องมั่ว สามารถดาวน์โหลดไปแตกไฟล์ลงโฟลเดอร์ `mods/` แล้วเปิดเล่นได้ทันที  
+* 📚 **`Enshrouded-v1.0.0.3-Build-1273043-SDK-Dump.zip`**: ตัว Dump โครงสร้างภายในของเอนจินเกม (12,646 คลาส, 38,367 ตัวแปร/ออฟเซ็ต, 72,746 ฟังก์ชัน) สำหรับ Game Build 1273043 สำหรับนักพัฒนาที่ต้องการสร้างม็อด C++, C#, หรือ Lua
 
 ---
 
