@@ -73,20 +73,6 @@ inline bool TryChainExistingOverlayHook(
         return true;
     }
 
-    // Case 3: Existing 2-byte short hotpatch jump (EB F9 -> jumping to target - 5)
-    if (target[0] == 0xEB && static_cast<int8_t>(target[1]) == -7) {
-        const uint8_t* prePatch = target - 5;
-        if (prePatch[0] == 0xE9) {
-            int32_t oldRel = *reinterpret_cast<const int32_t*>(prePatch + 1);
-            uintptr_t prevHookDest = reinterpret_cast<uintptr_t>(prePatch + 5) + oldRel;
-
-            outTrampOffset += EmitAbsoluteJump64(trampoline + outTrampOffset, prevHookDest);
-            outCurOffset += 2;
-            outReachedTerminator = true;
-            return true;
-        }
-    }
-
     return false;
 }
 

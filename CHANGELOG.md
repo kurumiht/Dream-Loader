@@ -4,6 +4,32 @@ All notable changes to the **dreamkurumiHT** Native Harmony Modding Framework wi
 
 ---
 
+## [v3.8.4] - 2026-10-30 (Bugfix Release - แก้ไขบัค)
+
+### 🐛 Bug Fixes & Architecture Hardening (แก้ไขบัคและปรับปรุงความเสถียร)
+- **Dream-AoE-Harvest Chest / Container Random Opening Fix (mods/Dream-AoE-Harvest/):**
+  - แก้ไขปัญหาเวลาเปิดกล่อง/หีบสมบัติแล้วกล่องรอบๆ ถูกเปิดมั่วหรือติดค้าง interaction offer
+  - เพิ่มการตรวจสอบ Archetype Bitmask (IsContainerArchetype & IsHarvestableCropArchetype) เพื่อแยกกล่องเก็บของ (HasInventory 0x174, RandomLoot 0x175) ออกจากพืชฟาร์มอย่างเด็ดขาด
+  - เพิ่ม RAII Scope Guard g_isExpandingCropBatch ป้องกันการ spoof ข้อเสนอ interaction ไปยังวัตถุอื่น
+- **Network & RPC Anti-Spoofing Hardening (DreamRpcMultiplexer.hpp & DreamNetBridge.hpp):**
+  - บล็อกการแอบอ้างสิทธิ์ (Spoofing) ทันทีทุกกรณีหาก rameCallerId != trustedSenderId ป้องกันไม่ให้ client แอบอ้างเป็น server (callerId == 0) หรือปลอมตัวเป็นผู้เล่นอื่น
+  - ดรอป packet ที่มี payload ขนาดผิดปกติทันที (
+eturn true) ป้องกัน malformed packet รั่วไหลเข้าเอนจินเน็ตเวิร์กของเกม
+  - ตั้งค่าเริ่มต้นของ remote callers เป็น DENY พร้อมระบบ Rate Limiting (120 calls/sec ต่อผู้เล่น)
+- **MidHook RIP Displacement & Instruction Relocation (DreamHook.hpp, DreamRelocator.hpp, DreamThread.hpp):**
+  - ตรวจจับ Foreign Hook ก่อนกระบวนการขโมยไบต์ และแปลง jump เป็น 14-byte FF 25 พร้อมบันทึก IP map ป้องกัน hook ซ้อนพัง
+  - ตัดกรณี EB F9 (Short Hotpatch) ออกจาก TryChainExistingOverlayHook ป้องกันการเขียนทับ 5 ไบต์ทำลายคำสั่งเดิม
+  - ขยาย DreamIpMap เป็น uint16_t รองรับ stub offset เกิน 255 ไบต์ พร้อม intra-instruction displacement mapping
+  - ปรับปรุงการตรวจสอบ branch range เป็น destAddr >= m_target ดักจับ backward jump ไปยังต้นฟังก์ชัน
+- **CrashGuard & Zero-Allocation Safe Dispatching (DreamCrashGuard.hpp, DreamDispatcher.hpp):**
+  - เปลี่ยน circuit breaker ใน DreamCrashGuard เป็นตาราง Lock-free Atomic m_faultCounts[64] ร่วมกับ HashModName ขจัด mutex และ string allocation ใน hot path
+  - จัดการ EXCEPTION_STACK_OVERFLOW ด้วย _resetstkoflw()
+  - ป้องกัน UB ใน DreamDispatcher กรณี type mismatch ให้ส่งคืน dummy handler อย่างปลอดภัย
+- **Expanded Verification Test Suite (74/74 Unit Tests Passing - 100% Green):**
+  - เพิ่มการทดสอบครอบคลุม Anti-Spoofing, Rate Limiting, MidHook Displacement, Unwind Info Layout และ Atomic Patching
+
+---
+
 ## [v3.8.3] - 2026-10-29
 
 ### 🚀 Highlights (จุดเด่นสำคัญในเวอร์ชั่นนี้)

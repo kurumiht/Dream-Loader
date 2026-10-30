@@ -116,12 +116,15 @@ public:
                                static_cast<unsigned long long>(actualVTable));
                 return false;
             }
+            DREAM_LOG_INFO("DreamVoxelEngine: Successfully captured verified VoxelGrid 'this' at %p (Simulation TID: %lu)",
+                           thisPtr, GetCurrentThreadId());
+        } else {
+            DREAM_LOG_INFO("DreamVoxelEngine: Captured unverified VoxelGrid 'this' at %p (expectedVTable == 0, Simulation TID: %lu)",
+                           thisPtr, GetCurrentThreadId());
         }
 
         m_engineGrid.store(thisPtr);
         m_simulationThreadId.store(GetCurrentThreadId());
-        DREAM_LOG_INFO("DreamVoxelEngine: Successfully captured verified VoxelGrid 'this' at %p (Simulation TID: %lu)",
-                       thisPtr, GetCurrentThreadId());
         return true;
     }
 
@@ -235,6 +238,12 @@ public:
 
     // Excavates or places spherical area of voxels (e.g. instant mine / terraform)
     size_t SetTerrainSphere(float cx, float cy, float cz, float radius, VoxelMaterialType material) {
+        constexpr float MAX_TERRAIN_SPHERE_RADIUS = 16.0f; // Limit to safe bounds (~17,000 cells max)
+        if (radius > MAX_TERRAIN_SPHERE_RADIUS) {
+            DREAM_LOG_WARN("DreamVoxelEngine: Clamping SetTerrainSphere radius from %.1f to %.1f", radius, MAX_TERRAIN_SPHERE_RADIUS);
+            radius = MAX_TERRAIN_SPHERE_RADIUS;
+        }
+
         int32_t minX = static_cast<int32_t>(std::floor(cx - radius));
         int32_t maxX = static_cast<int32_t>(std::ceil(cx + radius));
         int32_t minY = static_cast<int32_t>(std::floor(cy - radius));
@@ -304,6 +313,14 @@ public:
     bool InvokeNativeMiningEvent(void* pContext, void* pEventBatch) {
         auto pfn = m_pfnMiningNodeEvents.load();
         if (!pfn || !pContext) return false;
+
+        DWORD simTid = m_simulationThreadId.load();
+        if (simTid != 0 && GetCurrentThreadId() != simTid) {
+            DREAM_LOG_WARN("DreamVoxelEngine: NativeMiningEvent invoked on thread %lu, but simulation thread is %lu!",
+                           GetCurrentThreadId(), simTid);
+            return false;
+        }
+
         bool ok = false;
         DreamCrashGuard::ExecuteSafely("NativeMiningEvent", [&]() {
             pfn(pContext, pEventBatch);

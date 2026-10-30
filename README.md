@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **Modern Native Harmony Hooking & Modding Framework for C++20 / x64 Windows**  
 > *(Zero-Assembly, Zero-RAM-Scan, Hardware Breakpoint VEH, High-Performance Keen Games Engine Hooking)*  
-> **Framework Version:** `3.8.3` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
+> **Framework Version:** `3.8.4` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
 
 ---
 
@@ -9,11 +9,11 @@
   <b>Language Switcher / สลับภาษา:</b><br>
   <a href="README.md">🇬🇧 <b>English (Default)</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.3/Dream-Core-v3.8.3.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.8.3%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.3 Framework" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Dream-Core-v3.8.4.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.8.4%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.4 Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.3/Dream-AoE-Harvest-v3.8.3.zip">
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Dream-AoE-Harvest-v3.8.4.zip">
     <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20(Mod%20Plugin)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
   </a>
 </p>
@@ -29,8 +29,8 @@
 >
 > **Separate Downloads (`Dream-Core` vs `Dream-AoE-Harvest`):**  
 > To avoid any confusion—especially if you already use or develop other mods similar to ours—the downloads are provided in two separate packages:  
-> * 📦 **`Dream-Core-v3.8.3.zip`**: The standalone core native Harmony framework engine and C-ABI plugin loader. Does not bundle gameplay mods.  
-> * 🌾 **`Dream-AoE-Harvest-v3.8.3.zip`**: The standalone AoE crop harvesting mod plugin (3.5m radius, F8 toggle), provided separately so you can freely plug it into your server or client `mods/` directory.
+> * 📦 **`Dream-Core-v3.8.4.zip`**: The standalone core native Harmony framework engine and C-ABI plugin loader. Does not bundle gameplay mods.  
+> * 🌾 **`Dream-AoE-Harvest-v3.8.4.zip`**: The standalone AoE crop harvesting mod plugin (3.5m radius, F8 toggle), provided separately so you can freely plug it into your server or client `mods/` directory.
 
 ---
 
@@ -40,7 +40,7 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 
 ---
 
-## 69 Master Capabilities & Architecture
+## 74 Master Capabilities & Architecture
 
 1. **Declarative Harmony API (`Prefix` / `Postfix`)**
    - Clean and expressive function hooking without writing raw opcodes or calculating `E9 JMP` offsets manually.
@@ -251,7 +251,7 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 
 ---
 
-## Verification Suite (69/69 Tests Passed - 100% Green)
+## Verification Suite (74/74 Tests Passed - 100% Green)
 
 ```text
 [TEST 1] Testing DreamCache...                         -> [PASS]

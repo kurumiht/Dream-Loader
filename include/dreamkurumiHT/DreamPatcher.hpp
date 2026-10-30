@@ -24,8 +24,11 @@ using pfnNtGetNextThread = NTSTATUS(NTAPI*)(
 // Zero-Stutter Process-Only Thread Freeze
 // Uses NtGetNextThread to iterate only threads in the current process (15-30 us)
 // instead of scanning the entire system via CreateToolhelp32Snapshot (several ms).
+// Uses fixed-size buffer to eliminate heap allocations and deadlocks while threads are suspended.
 class FastProcessThreadFreeze {
 public:
+    static constexpr size_t MAX_FROZEN_THREADS = 1024;
+
     FastProcessThreadFreeze() {
         const DWORD currentTid = GetCurrentThreadId();
         HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
@@ -35,21 +38,27 @@ public:
         constexpr ACCESS_MASK access = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_QUERY_INFORMATION;
 
         if (fnNtGetNextThread) {
-            HANDLE hThread = nullptr;
-            HANDLE hNext   = nullptr;
+            HANDLE hCur  = nullptr;
+            HANDLE hNext = nullptr;
 
-            while (fnNtGetNextThread(GetCurrentProcess(), hThread, access, 0, 0, &hNext) >= 0) {
-                if (hThread) CloseHandle(hThread);
-                hThread = hNext;
+            while (fnNtGetNextThread(GetCurrentProcess(), hCur, access, 0, 0, &hNext) >= 0) {
+                if (hCur) CloseHandle(hCur);
+                hCur = hNext;
 
-                if (GetThreadId(hThread) != currentTid) {
-                    if (SuspendThread(hThread) != static_cast<DWORD>(-1)) {
-                        m_suspendedThreads.push_back(hThread);
-                        hThread = nullptr; // Keep handle in vector
+                if (GetThreadId(hCur) != currentTid) {
+                    if (m_suspendedCount < MAX_FROZEN_THREADS) {
+                        if (SuspendThread(hCur) != static_cast<DWORD>(-1)) {
+                            HANDLE hSaved = nullptr;
+                            if (DuplicateHandle(GetCurrentProcess(), hCur, GetCurrentProcess(), &hSaved, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+                                m_suspendedThreads[m_suspendedCount++] = hSaved;
+                            } else {
+                                ResumeThread(hCur);
+                            }
+                        }
                     }
                 }
             }
-            if (hThread) CloseHandle(hThread);
+            if (hCur) CloseHandle(hCur);
         } else {
             // Fallback for environments where NtGetNextThread is unavailable
             HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -61,10 +70,11 @@ public:
                 if (Thread32First(snapshot, &entry)) {
                     do {
                         if (entry.th32OwnerProcessID == currentPid && entry.th32ThreadID != currentTid) {
+                            if (m_suspendedCount >= MAX_FROZEN_THREADS) break;
                             HANDLE h = OpenThread(access, FALSE, entry.th32ThreadID);
                             if (h) {
                                 if (SuspendThread(h) != static_cast<DWORD>(-1)) {
-                                    m_suspendedThreads.push_back(h);
+                                    m_suspendedThreads[m_suspendedCount++] = h;
                                 } else {
                                     CloseHandle(h);
                                 }
@@ -80,7 +90,8 @@ public:
     // Relocate any suspended thread RIP caught inside [target, target + patchSize) to trampoline
     size_t AdjustCollidingThreads(uintptr_t target, size_t patchSize, uintptr_t trampoline) {
         size_t relocated = 0;
-        for (HANDLE hThread : m_suspendedThreads) {
+        for (size_t i = 0; i < m_suspendedCount; ++i) {
+            HANDLE hThread = m_suspendedThreads[i];
             CONTEXT ctx{};
             ctx.ContextFlags = CONTEXT_CONTROL;
             if (GetThreadContext(hThread, &ctx)) {
@@ -95,15 +106,15 @@ public:
     }
 
     size_t GetSuspendedCount() const {
-        return m_suspendedThreads.size();
+        return m_suspendedCount;
     }
 
     ~FastProcessThreadFreeze() {
-        for (HANDLE hThread : m_suspendedThreads) {
-            ResumeThread(hThread);
-            CloseHandle(hThread);
+        for (size_t i = 0; i < m_suspendedCount; ++i) {
+            ResumeThread(m_suspendedThreads[i]);
+            CloseHandle(m_suspendedThreads[i]);
         }
-        m_suspendedThreads.clear();
+        m_suspendedCount = 0;
     }
 
     // Non-copyable, non-movable
@@ -111,12 +122,17 @@ public:
     FastProcessThreadFreeze& operator=(const FastProcessThreadFreeze&) = delete;
 
 private:
-    std::vector<HANDLE> m_suspendedThreads;
+    HANDLE m_suspendedThreads[MAX_FROZEN_THREADS];
+    size_t m_suspendedCount{0};
 };
 
-// Lock-free atomic 5-byte patch when firstInstructionLength >= 5 and inside single cache line
+// Thread-safe atomic 5-byte patch when firstInstructionLength >= 5 and inside single cache line
 inline bool TryAtomicFiveBytePatch(uint8_t* target, int32_t rel32Offset, size_t firstInstrLen) {
     if (!target) return false;
+
+    // Mutex protects against concurrent VirtualProtect page protection flips across threads
+    static std::mutex s_patchProtMutex;
+    std::lock_guard<std::mutex> lock(s_patchProtMutex);
 
     const uintptr_t addr = reinterpret_cast<uintptr_t>(target);
     const size_t cacheLineOffset = addr & 63;

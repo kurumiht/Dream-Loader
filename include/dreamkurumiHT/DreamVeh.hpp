@@ -8,6 +8,17 @@
 #include "DreamHook.hpp"
 #include "DreamLog.hpp"
 
+#ifndef NTSTATUS
+typedef LONG NTSTATUS;
+#endif
+#ifndef NTAPI
+#define NTAPI __stdcall
+#endif
+#ifndef PFN_NT_GET_NEXT_THREAD_DEFINED
+#define PFN_NT_GET_NEXT_THREAD_DEFINED
+typedef NTSTATUS(NTAPI* pfnNtGetNextThread)(HANDLE ProcessHandle, HANDLE ThreadHandle, ACCESS_MASK DesiredAccess, ULONG HandleAttributes, ULONG Flags, PHANDLE NewThreadHandle);
+#endif
+
 namespace dreamkurumi {
 
 enum class BreakOn : uint8_t {
@@ -24,12 +35,33 @@ enum class BreakSize : uint8_t {
 };
 
 struct HardwareBreakpointInfo {
-    void* address{nullptr};
-    BreakOn condition{BreakOn::Execute};
-    BreakSize size{BreakSize::Bytes1};
+    std::atomic<void*> address{nullptr};
+    std::atomic<BreakOn> condition{BreakOn::Execute};
+    std::atomic<BreakSize> size{BreakSize::Bytes1};
     int slot{-1}; // DR0..DR3 (0..3)
     std::function<void(DreamCpuContext&)> callback;
-    bool active{false};
+    std::atomic<bool> active{false};
+
+    HardwareBreakpointInfo() = default;
+    HardwareBreakpointInfo(const HardwareBreakpointInfo& other) {
+        address.store(other.address.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        condition.store(other.condition.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        size.store(other.size.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        slot = other.slot;
+        callback = other.callback;
+        active.store(other.active.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+    HardwareBreakpointInfo& operator=(const HardwareBreakpointInfo& other) {
+        if (this != &other) {
+            address.store(other.address.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            condition.store(other.condition.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            size.store(other.size.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            slot = other.slot;
+            callback = other.callback;
+            active.store(other.active.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        }
+        return *this;
+    }
 };
 
 class DreamVeh {
@@ -65,6 +97,32 @@ public:
     // Set a Hardware Breakpoint on an address
     // Slot is automatically assigned to DR0, DR1, DR2, or DR3
     int SetBreakpoint(void* address, BreakOn condition, BreakSize size, std::function<void(DreamCpuContext&)> callback) {
+        if (!address) {
+            DREAM_LOG_ERROR("DreamVeh: Cannot set breakpoint on null address");
+            return -1;
+        }
+
+        // x86/x64 debug registers: Execute breakpoints MUST use size 1
+        if (condition == BreakOn::Execute && size != BreakSize::Bytes1) {
+            DREAM_LOG_WARN("DreamVeh: Execute breakpoints must have 1-byte length; enforcing Bytes1");
+            size = BreakSize::Bytes1;
+        }
+
+        // Validate address alignment required by hardware debug registers
+        uintptr_t addrVal = reinterpret_cast<uintptr_t>(address);
+        if (size == BreakSize::Bytes2 && (addrVal & 1) != 0) {
+            DREAM_LOG_ERROR("DreamVeh: 2-byte breakpoint address 0x%p must be 2-byte aligned", address);
+            return -1;
+        }
+        if (size == BreakSize::Bytes4 && (addrVal & 3) != 0) {
+            DREAM_LOG_ERROR("DreamVeh: 4-byte breakpoint address 0x%p must be 4-byte aligned", address);
+            return -1;
+        }
+        if (size == BreakSize::Bytes8 && (addrVal & 7) != 0) {
+            DREAM_LOG_ERROR("DreamVeh: 8-byte breakpoint address 0x%p must be 8-byte aligned", address);
+            return -1;
+        }
+
         if (!m_vehHandle) {
             if (!Initialize()) return -1;
         }
@@ -73,7 +131,7 @@ public:
 
         int slot = -1;
         for (int i = 0; i < 4; ++i) {
-            if (!m_breakpoints[i].active) {
+            if (!m_breakpoints[i].active.load(std::memory_order_acquire)) {
                 slot = i;
                 break;
             }
@@ -84,15 +142,12 @@ public:
             return -1;
         }
 
-        HardwareBreakpointInfo info;
-        info.address = address;
-        info.condition = condition;
-        info.size = size;
-        info.slot = slot;
-        info.callback = callback;
-        info.active = true;
-
-        m_breakpoints[slot] = info;
+        m_breakpoints[slot].address.store(address, std::memory_order_relaxed);
+        m_breakpoints[slot].condition.store(condition, std::memory_order_relaxed);
+        m_breakpoints[slot].size.store(size, std::memory_order_relaxed);
+        m_breakpoints[slot].slot = slot;
+        m_breakpoints[slot].callback = callback;
+        m_breakpoints[slot].active.store(true, std::memory_order_release);
 
         // Apply breakpoint across all threads (including current thread via kernel context switch)
         ApplyBreakpointToAllThreads(slot, address, condition, size);
@@ -105,10 +160,11 @@ public:
         if (slot < 0 || slot > 3) return false;
         std::lock_guard<std::mutex> lock(m_mutex);
 
-        if (!m_breakpoints[slot].active) return false;
+        if (!m_breakpoints[slot].active.load(std::memory_order_acquire)) return false;
 
-        m_breakpoints[slot].active = false;
-        m_breakpoints[slot].address = nullptr;
+        m_breakpoints[slot].active.store(false, std::memory_order_release);
+        m_breakpoints[slot].address.store(nullptr, std::memory_order_release);
+        m_breakpoints[slot].callback = nullptr;
 
         ClearBreakpointOnAllThreads(slot);
         DREAM_LOG_INFO("DreamVeh: Cleared Hardware Breakpoint DR%d", slot);
@@ -117,8 +173,10 @@ public:
 
     void ClearAllBreakpoints() {
         for (int i = 0; i < 4; ++i) {
-            if (m_breakpoints[i].active) {
-                m_breakpoints[i].active = false;
+            if (m_breakpoints[i].active.load(std::memory_order_acquire)) {
+                m_breakpoints[i].active.store(false, std::memory_order_release);
+                m_breakpoints[i].address.store(nullptr, std::memory_order_release);
+                m_breakpoints[i].callback = nullptr;
                 ClearBreakpointOnAllThreads(i);
             }
         }
@@ -134,8 +192,8 @@ public:
         DWORD tid = GetCurrentThreadId();
         std::lock_guard<std::mutex> lock(m_mutex);
         for (int slot = 0; slot < 4; ++slot) {
-            if (m_breakpoints[slot].active && m_breakpoints[slot].address) {
-                ApplyBreakpointToThread(tid, slot, m_breakpoints[slot].address, m_breakpoints[slot].condition, m_breakpoints[slot].size);
+            if (m_breakpoints[slot].active.load(std::memory_order_relaxed) && m_breakpoints[slot].address.load(std::memory_order_relaxed)) {
+                ApplyBreakpointToThread(tid, slot, m_breakpoints[slot].address.load(std::memory_order_relaxed), m_breakpoints[slot].condition.load(std::memory_order_relaxed), m_breakpoints[slot].size.load(std::memory_order_relaxed));
             }
         }
     }
@@ -144,8 +202,8 @@ public:
     void SyncAllThreads() {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (int slot = 0; slot < 4; ++slot) {
-            if (m_breakpoints[slot].active) {
-                ApplyBreakpointToAllThreads(slot, m_breakpoints[slot].address, m_breakpoints[slot].condition, m_breakpoints[slot].size);
+            if (m_breakpoints[slot].active.load(std::memory_order_relaxed)) {
+                ApplyBreakpointToAllThreads(slot, m_breakpoints[slot].address.load(std::memory_order_relaxed), m_breakpoints[slot].condition.load(std::memory_order_relaxed), m_breakpoints[slot].size.load(std::memory_order_relaxed));
             }
         }
         DREAM_LOG_INFO("DreamVeh: Synchronized active hardware breakpoints to all process threads");
@@ -169,12 +227,15 @@ private:
 
             bool handled = false;
             for (int i = 0; i < 4; ++i) {
-                if (!inst.m_breakpoints[i].active) continue;
+                if (!inst.m_breakpoints[i].active.load(std::memory_order_acquire)) continue;
+
+                void* bpAddr = inst.m_breakpoints[i].address.load(std::memory_order_acquire);
+                BreakOn bpCond = inst.m_breakpoints[i].condition.load(std::memory_order_relaxed);
 
                 bool hit = (dr6 & (1ULL << i)) != 0;
                 // Only for instruction execution breakpoints, allow RIP match as fallback
-                if (!hit && inst.m_breakpoints[i].condition == BreakOn::Execute) {
-                    hit = (pExceptionInfo->ContextRecord->Rip == reinterpret_cast<DWORD64>(inst.m_breakpoints[i].address));
+                if (!hit && bpCond == BreakOn::Execute) {
+                    hit = (pExceptionInfo->ContextRecord->Rip == reinterpret_cast<DWORD64>(bpAddr));
                 }
 
                 if (hit) {
@@ -203,6 +264,7 @@ private:
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
+public:
     static void CopyFromWindowsContext(PCONTEXT src, DreamCpuContext& dst) {
         dst.rax = src->Rax;
         dst.rbx = src->Rbx;
@@ -221,8 +283,11 @@ private:
         dst.r15 = src->R15;
         dst.rflags = src->EFlags;
 
-        auto* xmmSrc = reinterpret_cast<const uint8_t*>(&src->Xmm0);
-        std::memcpy(dst.xmm, xmmSrc, sizeof(dst.xmm));
+        const M128A* winXmm = &src->Xmm0;
+        for (int i = 0; i < 16; ++i) {
+            std::memcpy(dst.xmm[i].u8, &winXmm[i], 16);
+            std::memset(dst.xmm[i]._pad_high, 0, 16);
+        }
     }
 
     static void CopyToWindowsContext(const DreamCpuContext& src, PCONTEXT dst) {
@@ -243,8 +308,10 @@ private:
         dst->R15 = src.r15;
         dst->EFlags = static_cast<DWORD>(src.rflags);
 
-        auto* xmmDst = reinterpret_cast<uint8_t*>(&dst->Xmm0);
-        std::memcpy(xmmDst, src.xmm, sizeof(src.xmm));
+        M128A* winXmm = &dst->Xmm0;
+        for (int i = 0; i < 16; ++i) {
+            std::memcpy(&winXmm[i], src.xmm[i].u8, 16);
+        }
     }
 
     void ApplyBreakpointToAllThreads(int slot, void* address, BreakOn condition, BreakSize size) {
@@ -254,7 +321,28 @@ private:
         // 1. Current thread: apply directly via SetThreadContext
         ApplyBreakpointToThread(currentTid, slot, address, condition, size);
 
-        // 2. Broadcast to all other worker threads
+        // 2. Broadcast to all other worker threads via fast process-only NtGetNextThread
+        constexpr ACCESS_MASK access = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_QUERY_INFORMATION;
+        HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+        pfnNtGetNextThread fnNtGetNextThread = hNtdll ?
+            reinterpret_cast<pfnNtGetNextThread>(GetProcAddress(hNtdll, "NtGetNextThread")) : nullptr;
+
+        if (fnNtGetNextThread) {
+            HANDLE hThread = nullptr;
+            HANDLE hNext = nullptr;
+            while (fnNtGetNextThread(GetCurrentProcess(), hThread, access, 0, 0, &hNext) >= 0) {
+                if (hThread) CloseHandle(hThread);
+                hThread = hNext;
+                DWORD tid = GetThreadId(hThread);
+                if (tid != currentTid && tid != 0) {
+                    ApplyBreakpointToThreadHandle(hThread, slot, address, condition, size);
+                }
+            }
+            if (hThread) CloseHandle(hThread);
+            return;
+        }
+
+        // Fallback: Toolhelp32 snapshot
         HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
         if (hSnap == INVALID_HANDLE_VALUE) return;
 
@@ -269,6 +357,35 @@ private:
             } while (Thread32Next(hSnap, &te));
         }
         CloseHandle(hSnap);
+    }
+
+    void ApplyBreakpointToThreadHandle(HANDLE hThread, int slot, void* address, BreakOn condition, BreakSize size) {
+        if (!hThread) return;
+        SuspendThread(hThread);
+
+        CONTEXT ctx{};
+        ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+        if (GetThreadContext(hThread, &ctx)) {
+            DWORD64 addrVal = reinterpret_cast<DWORD64>(address);
+            switch (slot) {
+                case 0: ctx.Dr0 = addrVal; break;
+                case 1: ctx.Dr1 = addrVal; break;
+                case 2: ctx.Dr2 = addrVal; break;
+                case 3: ctx.Dr3 = addrVal; break;
+            }
+
+            ctx.Dr7 |= (1ULL << (slot * 2));
+            int shift = 16 + (slot * 4);
+            ctx.Dr7 &= ~(0xFULL << shift);
+
+            DWORD64 condBits = static_cast<DWORD64>(condition) & 0x3;
+            DWORD64 sizeBits = static_cast<DWORD64>(size) & 0x3;
+            ctx.Dr7 |= ((condBits | (sizeBits << 2)) << shift);
+
+            SetThreadContext(hThread, &ctx);
+        }
+
+        ResumeThread(hThread);
     }
 
     void ApplyBreakpointToThread(DWORD tid, int slot, void* address, BreakOn condition, BreakSize size) {
@@ -315,7 +432,28 @@ private:
         // 1. Current thread
         ClearBreakpointOnThread(currentTid, slot);
 
-        // 2. Broadcast to all other worker threads
+        // 2. Broadcast to all other worker threads via fast process-only NtGetNextThread
+        constexpr ACCESS_MASK access = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_QUERY_INFORMATION;
+        HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+        pfnNtGetNextThread fnNtGetNextThread = hNtdll ?
+            reinterpret_cast<pfnNtGetNextThread>(GetProcAddress(hNtdll, "NtGetNextThread")) : nullptr;
+
+        if (fnNtGetNextThread) {
+            HANDLE hThread = nullptr;
+            HANDLE hNext = nullptr;
+            while (fnNtGetNextThread(GetCurrentProcess(), hThread, access, 0, 0, &hNext) >= 0) {
+                if (hThread) CloseHandle(hThread);
+                hThread = hNext;
+                DWORD tid = GetThreadId(hThread);
+                if (tid != currentTid && tid != 0) {
+                    ClearBreakpointOnThreadHandle(hThread, slot);
+                }
+            }
+            if (hThread) CloseHandle(hThread);
+            return;
+        }
+
+        // Fallback: Toolhelp32 snapshot
         HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
         if (hSnap == INVALID_HANDLE_VALUE) return;
 
@@ -330,6 +468,29 @@ private:
             } while (Thread32Next(hSnap, &te));
         }
         CloseHandle(hSnap);
+    }
+
+    void ClearBreakpointOnThreadHandle(HANDLE hThread, int slot) {
+        if (!hThread) return;
+        SuspendThread(hThread);
+
+        CONTEXT ctx{};
+        ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+        if (GetThreadContext(hThread, &ctx)) {
+            switch (slot) {
+                case 0: ctx.Dr0 = 0; break;
+                case 1: ctx.Dr1 = 0; break;
+                case 2: ctx.Dr2 = 0; break;
+                case 3: ctx.Dr3 = 0; break;
+            }
+            ctx.Dr7 &= ~(1ULL << (slot * 2));
+            int shift = 16 + (slot * 4);
+            ctx.Dr7 &= ~(0xFULL << shift);
+
+            SetThreadContext(hThread, &ctx);
+        }
+
+        ResumeThread(hThread);
     }
 
     void ClearBreakpointOnThread(DWORD tid, int slot) {

@@ -333,7 +333,9 @@ public:
     }
 
     // Deserialize incoming raw bytes from socket into a NetPacket
-    static bool DeserializePacket(const uint8_t* data, size_t size, NetPacket& outPacket) {
+    // trustedSenderId: Connection/peer ID authenticated by server transport.
+    // If specified (!= 0xFFFFFFFF), overrides unauthenticated senderId in packet header to prevent spoofing.
+    static bool DeserializePacket(const uint8_t* data, size_t size, NetPacket& outPacket, uint32_t trustedSenderId = 0xFFFFFFFF) {
         if (!data || size < sizeof(NetPacketHeader)) return false;
 
         NetPacketHeader hdr;
@@ -343,16 +345,16 @@ public:
 
         outPacket.channelHash = hdr.channelHash;
         outPacket.opcode = hdr.opcode;
-        outPacket.senderId = hdr.senderId;
+        outPacket.senderId = (trustedSenderId != 0xFFFFFFFF) ? trustedSenderId : hdr.senderId;
         outPacket.targetId = hdr.targetId;
         outPacket.payload.assign(data + sizeof(NetPacketHeader), data + sizeof(NetPacketHeader) + hdr.payloadSize);
         return true;
     }
 
     // Ingest incoming raw network bytes and route to subscribed mod handlers
-    bool IngestRawBytes(const uint8_t* data, size_t size) {
+    bool IngestRawBytes(const uint8_t* data, size_t size, uint32_t trustedSenderId = 0xFFFFFFFF) {
         NetPacket pkt;
-        if (DeserializePacket(data, size, pkt)) {
+        if (DeserializePacket(data, size, pkt, trustedSenderId)) {
             DeliverPacket(pkt);
             return true;
         }

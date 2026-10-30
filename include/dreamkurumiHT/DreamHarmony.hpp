@@ -166,17 +166,20 @@ public:
                 s.prefix = pfx;
                 s.postfix = post;
                 SortSubscribers();
+                m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
                 return;
             }
         }
         m_subscribers.push_back({name, priority, ownerKey, pfx, post});
         SortSubscribers();
+        m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
     }
 
     void RemoveSubscriber(void* ownerKey) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_subscribers.erase(std::remove_if(m_subscribers.begin(), m_subscribers.end(),
             [ownerKey](const Subscriber& s) { return s.ownerKey == ownerKey; }), m_subscribers.end());
+        m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
     }
 
     size_t GetSubscriberCount() {
@@ -185,19 +188,14 @@ public:
     }
 
     Ret Dispatch(Args... args) {
-        std::vector<Subscriber> subs;
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            subs = m_subscribers;
-        }
-
+        auto snap = m_snapshot.load();
         auto orig = GetOriginal();
-        if (subs.empty()) {
+        if (!snap || snap->empty()) {
             return orig ? orig(args...) : Ret{};
         }
 
         bool runOriginal = true;
-        for (const auto& s : subs) {
+        for (const auto& s : *snap) {
             if (s.prefix) {
                 DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
                     if (!s.prefix(args...)) {
@@ -213,7 +211,7 @@ public:
             result = orig(args...);
         }
 
-        for (const auto& s : subs) {
+        for (const auto& s : *snap) {
             if (s.postfix) {
                 DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
                     s.postfix(result, args...);
@@ -234,6 +232,7 @@ private:
     DreamInlineHook m_hook;
     std::mutex m_mutex;
     std::vector<Subscriber> m_subscribers;
+    std::atomic<std::shared_ptr<const std::vector<Subscriber>>> m_snapshot;
 };
 
 // Void specialization
@@ -277,17 +276,20 @@ public:
                 s.prefix = pfx;
                 s.postfix = post;
                 SortSubscribers();
+                m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
                 return;
             }
         }
         m_subscribers.push_back({name, priority, ownerKey, pfx, post});
         SortSubscribers();
+        m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
     }
 
     void RemoveSubscriber(void* ownerKey) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_subscribers.erase(std::remove_if(m_subscribers.begin(), m_subscribers.end(),
             [ownerKey](const Subscriber& s) { return s.ownerKey == ownerKey; }), m_subscribers.end());
+        m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
     }
 
     size_t GetSubscriberCount() {
@@ -296,20 +298,15 @@ public:
     }
 
     void Dispatch(Args... args) {
-        std::vector<Subscriber> subs;
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            subs = m_subscribers;
-        }
-
+        auto snap = m_snapshot.load();
         auto orig = GetOriginal();
-        if (subs.empty()) {
+        if (!snap || snap->empty()) {
             if (orig) orig(args...);
             return;
         }
 
         bool runOriginal = true;
-        for (const auto& s : subs) {
+        for (const auto& s : *snap) {
             if (s.prefix) {
                 DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
                     if (!s.prefix(args...)) {
@@ -324,7 +321,7 @@ public:
             orig(args...);
         }
 
-        for (const auto& s : subs) {
+        for (const auto& s : *snap) {
             if (s.postfix) {
                 DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
                     s.postfix(args...);
@@ -344,6 +341,7 @@ private:
     DreamInlineHook m_hook;
     std::mutex m_mutex;
     std::vector<Subscriber> m_subscribers;
+    std::atomic<std::shared_ptr<const std::vector<Subscriber>>> m_snapshot;
 };
 
 // Global pipeline registry shared across ALL Derived patches with signature Ret(Args...)
@@ -418,35 +416,29 @@ public:
 
         typename CentralHookPipeline<Ret, Args...>::PrefixFn pfx = [](Args&... args) -> bool {
             bool runOriginal = true;
-            DreamCrashGuard::ExecuteSafely("HarmonyPrefix", [&]() {
-                if constexpr (requires { { Derived::Prefix(args...) } -> std::same_as<bool>; }) {
-                    runOriginal = Derived::Prefix(args...);
-                } else if constexpr (requires { Derived::Prefix(args...); }) {
-                    Derived::Prefix(args...);
-                    runOriginal = true;
-                }
-            });
+            if constexpr (requires { { Derived::Prefix(args...) } -> std::same_as<bool>; }) {
+                runOriginal = Derived::Prefix(args...);
+            } else if constexpr (requires { Derived::Prefix(args...); }) {
+                Derived::Prefix(args...);
+                runOriginal = true;
+            }
             return runOriginal;
         };
 
         if constexpr (std::is_void_v<Ret>) {
             typename CentralHookPipeline<void, Args...>::PostfixFn post = [](Args&... args) {
-                DreamCrashGuard::ExecuteSafely("HarmonyPostfix", [&]() {
-                    if constexpr (requires { Derived::Postfix(args...); }) {
-                        Derived::Postfix(args...);
-                    }
-                });
+                if constexpr (requires { Derived::Postfix(args...); }) {
+                    Derived::Postfix(args...);
+                }
             };
             pipe.AddSubscriber(name, priority, (void*)&s_autoRegister, pfx, post);
         } else {
             typename CentralHookPipeline<Ret, Args...>::PostfixFn post = [](Ret& result, Args&... args) {
-                DreamCrashGuard::ExecuteSafely("HarmonyPostfix", [&]() {
-                    if constexpr (requires { Derived::Postfix(result, args...); }) {
-                        Derived::Postfix(result, args...);
-                    } else if constexpr (requires { Derived::Postfix(args...); }) {
-                        Derived::Postfix(args...);
-                    }
-                });
+                if constexpr (requires { Derived::Postfix(result, args...); }) {
+                    Derived::Postfix(result, args...);
+                } else if constexpr (requires { Derived::Postfix(args...); }) {
+                    Derived::Postfix(args...);
+                }
             };
             pipe.AddSubscriber(name, priority, (void*)&s_autoRegister, pfx, post);
         }

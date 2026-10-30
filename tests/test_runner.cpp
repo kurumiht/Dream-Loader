@@ -19,6 +19,7 @@ __declspec(noinline) void TargetFunction_ConsumeStamina(void* player, float amou
 }
 
 __declspec(noinline) int TargetFunction_Passive(int a) {
+    asm volatile("nop; nop; nop; nop; nop; nop; nop; nop;");
     return a + 10;
 }
 
@@ -166,6 +167,7 @@ __attribute__((noinline)) int InvokeShadowVmt(TestShadowVmtObj* p) {
 }
 
 int main() {
+    setvbuf(stdout, NULL, _IONBF, 0);
     std::cout << "============================================================\n";
     std::cout << " dreamkurumiHT Framework Verification & Test Suite\n";
     std::cout << "============================================================\n\n";
@@ -2137,6 +2139,9 @@ int main() {
     {
         std::cout << "[Test 56] Item 8: Custom Network RPC Multiplexer Verification...\n";
         auto& rpc = dreamkurumi::DreamRpcMultiplexer::Instance();
+        rpc.SetPermissionValidator([](uint32_t /*callerId*/, uint64_t /*rpcHash*/) {
+            return true;
+        });
         bool rpcHandled = false;
         std::string receivedRpcMsg;
         int32_t receivedRpcInt = 0;
@@ -2373,11 +2378,11 @@ int main() {
         dreamkurumi::MinimalUnwindInfo unwindInfo{};
         dreamkurumi::InitChunkUnwindHeader(&unwindInfo);
         assert(unwindInfo.Version == 1);
-        assert(unwindInfo.SizeOfProlog == 0x11);
-        assert(unwindInfo.CountOfCodes == 2);
+        assert(unwindInfo.SizeOfProlog == 0x22);
+        assert(unwindInfo.CountOfCodes == 19);
         assert(unwindInfo.FrameRegister == dreamkurumi::REG_RBP);
-        assert(sizeof(unwindInfo) == 8);
-        std::cout << "  MinimalUnwindInfo 8-byte layout & SET_FPREG verification -> [PASS]\n";
+        assert(sizeof(unwindInfo) == 44);
+        std::cout << "  MinimalUnwindInfo 44-byte layout & SET_FPREG verification -> [PASS]\n";
 
         // 2. Verify FastProcessThreadFreeze (NtGetNextThread)
         {
@@ -2722,6 +2727,266 @@ int main() {
         std::cout << "  [PASS] Test 69 (KFC4 Container Header Validation) fully verified!\n\n";
     }
 
+    // ============================================================================
+    // Test 70: MidHook RIP Displacement & IpMap Relocation Translation
+    // ============================================================================
+    {
+        std::cout << "[Test 70] Testing MidHook RIP Displacement & IpMap Relocation Translation...\n";
+
+        dreamkurumi::DreamIpMap ipMap[4];
+        ipMap[0] = { 0,  0x120 };
+        ipMap[1] = { 5,  0x125 };
+        ipMap[2] = { 10, 0x12A };
+        ipMap[3] = { 11, 0x12B };
+
+        uintptr_t targetBase = 0x7FF610000000ULL;
+        uintptr_t stubBase   = 0x7FF620000000ULL;
+        size_t stolenLen = 15;
+
+        uintptr_t relocatedRip = 0;
+
+        // 1. Thread stopped at targetBase + 0 (instruction 0 start)
+        bool ok0 = dreamkurumi::ScopedThreadFreeze::TranslateIp(targetBase + 0, targetBase, stolenLen, stubBase, ipMap, 4, relocatedRip);
+        assert(ok0 && relocatedRip == stubBase + 0x120);
+
+        // 2. Thread stopped at targetBase + 5 (instruction 1 start)
+        bool ok1 = dreamkurumi::ScopedThreadFreeze::TranslateIp(targetBase + 5, targetBase, stolenLen, stubBase, ipMap, 4, relocatedRip);
+        assert(ok1 && relocatedRip == stubBase + 0x125);
+
+        // 3. Thread stopped at targetBase + 7 (intra-instruction 1: offset +2 within 5-byte instruction)
+        bool okIntra = dreamkurumi::ScopedThreadFreeze::TranslateIp(targetBase + 7, targetBase, stolenLen, stubBase, ipMap, 4, relocatedRip);
+        assert(okIntra && relocatedRip == stubBase + 0x125 + 2);
+
+        // 4. Thread stopped at targetBase + 12 (intra-instruction 3: offset +1 within sub rsp, 0x20)
+        bool okIntra3 = dreamkurumi::ScopedThreadFreeze::TranslateIp(targetBase + 12, targetBase, stolenLen, stubBase, ipMap, 4, relocatedRip);
+        assert(okIntra3 && relocatedRip == stubBase + 0x12B + 1);
+
+        // 5. RIP outside stolen range -> not translated
+        bool okOut = dreamkurumi::ScopedThreadFreeze::TranslateIp(targetBase + 20, targetBase, stolenLen, stubBase, ipMap, 4, relocatedRip);
+        assert(!okOut);
+
+        std::cout << "  Instruction boundary exact mapping -> [PASS]\n";
+        std::cout << "  Intra-instruction offset displacement mapping -> [PASS]\n";
+        std::cout << "  Out-of-range bounds check rejection -> [PASS]\n";
+        std::cout << "  [PASS] Test 70 (MidHook RIP Displacement & IpMap) fully verified!\n\n";
+    }
+
+    // ============================================================================
+    // Test 71: RtlVirtualUnwind Stack Walk & MinimalUnwindInfo Verification
+    // ============================================================================
+    {
+        std::cout << "[Test 71] Testing RtlVirtualUnwind Stack Walk & MinimalUnwindInfo Verification...\n";
+
+        // Allocate a MidHook stub chunk from DreamTrampolinePool near main
+        void* stubPage = dreamkurumi::DreamTrampolinePool::Instance().AllocateMidHook((void*)&main, 64);
+        assert(stubPage != nullptr);
+
+        // Lookup function entry via OS API
+        ULONG64 imageBase = 0;
+        PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(stubPage), &imageBase, nullptr);
+        assert(rf != nullptr);
+
+        // Read registered MinimalUnwindInfo from the chunk header
+        auto* pUnwind = reinterpret_cast<const dreamkurumi::MinimalUnwindInfo*>(imageBase + rf->UnwindData);
+        assert(pUnwind != nullptr);
+        assert(sizeof(*pUnwind) == 44);
+        assert(pUnwind->Version == 1);
+        assert(pUnwind->Flags == 0);
+        assert(pUnwind->SizeOfProlog == 0x22);
+        assert(pUnwind->CountOfCodes == 19);
+        assert(pUnwind->FrameRegister == 5); // RBP
+        assert(pUnwind->FrameOffset == 0);
+
+        // Virtual unwind test: ensure RtlVirtualUnwind safely steps through stub
+        CONTEXT ctx{};
+        ctx.ContextFlags = CONTEXT_FULL;
+        RtlCaptureContext(&ctx);
+        ctx.Rip = reinterpret_cast<DWORD64>(stubPage);
+
+        PVOID handlerData = nullptr;
+        ULONG64 establisherFrame = 0;
+        KNONVOLATILE_CONTEXT_POINTERS nvContext{};
+        memset(&nvContext, 0, sizeof(nvContext));
+
+        PEXCEPTION_ROUTINE pfnHandler = RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, ctx.Rip, rf, &ctx, &handlerData, &establisherFrame, &nvContext);
+        (void)pfnHandler; // Valid return
+        std::cout << "  MidHook stub RUNTIME_FUNCTION registration in OS table -> [PASS]\n";
+        std::cout << "  RtlVirtualUnwind execution without SEH fault -> [PASS]\n";
+        std::cout << "  [PASS] Test 71 (RtlVirtualUnwind Stack Walk Parity) fully verified!\n\n";
+    }
+
+    // ============================================================================
+    // Test 72: VEH XMM Stride & HW Breakpoint Alignment Hardening
+    // ============================================================================
+    {
+        std::cout << "[Test 72] Testing VEH XMM Stride & HW Breakpoint Alignment Hardening...\n";
+
+        // 1. Verify 16 XMM registers preservation across Win32 CONTEXT conversion
+        CONTEXT winCtx{};
+        winCtx.ContextFlags = CONTEXT_ALL;
+        for (int i = 0; i < 16; ++i) {
+            M128A* reg = reinterpret_cast<M128A*>(&winCtx.Xmm0) + i;
+            reg->Low = 0x1111222233334444ULL + i;
+            reg->High = 0x5555666677778888ULL + i;
+        }
+
+        dreamkurumi::DreamCpuContext dreamCtx{};
+        dreamkurumi::DreamVeh::CopyFromWindowsContext(&winCtx, dreamCtx);
+
+        // Verify each XMM register copied with 32-byte stride without corruption
+        for (int i = 0; i < 16; ++i) {
+            assert(dreamCtx.xmm[i].u64[0] == 0x1111222233334444ULL + i);
+            assert(dreamCtx.xmm[i].u64[1] == 0x5555666677778888ULL + i);
+            assert(dreamCtx.xmm[i]._pad_high[0] == 0);
+            assert(dreamCtx.xmm[i]._pad_high[1] == 0);
+        }
+
+        // Round-trip back to Windows CONTEXT
+        CONTEXT roundTripCtx{};
+        roundTripCtx.ContextFlags = CONTEXT_ALL;
+        dreamkurumi::DreamVeh::CopyToWindowsContext(dreamCtx, &roundTripCtx);
+        for (int i = 0; i < 16; ++i) {
+            M128A* reg = reinterpret_cast<M128A*>(&roundTripCtx.Xmm0) + i;
+            assert(reg->Low == 0x1111222233334444ULL + i);
+            assert(reg->High == 0x5555666677778888ULL + i);
+        }
+        std::cout << "  XMM0..XMM15 16-byte individual copy and stride parity -> [PASS]\n";
+
+        // 2. Hardware Breakpoint parameter checks
+        auto& veh = dreamkurumi::DreamVeh::Instance();
+        alignas(8) uint64_t alignedVar = 0x1234;
+
+        // Execute breakpoint with size != 1 -> clamped to Bytes1
+        int bp0 = veh.SetBreakpoint(&alignedVar, dreamkurumi::BreakOn::Execute, dreamkurumi::BreakSize::Bytes4, nullptr);
+        assert(bp0 >= 0);
+        veh.RemoveBreakpoint(bp0);
+
+        // Misaligned address for 4-byte watchpoint -> rejected
+        void* misalignedPtr = reinterpret_cast<uint8_t*>(&alignedVar) + 1;
+        int bpBad = veh.SetBreakpoint(misalignedPtr, dreamkurumi::BreakOn::Write, dreamkurumi::BreakSize::Bytes4, nullptr);
+        assert(bpBad == -1);
+
+        std::cout << "  Execute breakpoint 1-byte clamping -> [PASS]\n";
+        std::cout << "  Misaligned hardware watchpoint address rejection -> [PASS]\n";
+        std::cout << "  [PASS] Test 72 (VEH XMM Stride & HW Breakpoint Hardening) fully verified!\n\n";
+    }
+
+    // ============================================================================
+    // Test 73: DreamStore Binary Blob, Double Precision, String Escaping & Versioning
+    // ============================================================================
+    {
+        std::cout << "[Test 73] Testing DreamStore Binary Blob, Double Precision, String Escaping & Versioning...\n";
+        auto& store = dreamkurumi::DreamStore::Instance();
+        store.SetStorageDirectory("test_mods_store_harden/");
+        auto ns = store.GetNamespace("TestHarden73");
+        assert(ns != nullptr);
+
+        // 1. Double full 17-digit IEEE-754 precision
+        double origPi = 3.1415926535897931;
+        ns->SetDouble("HighPrecisionPi", origPi);
+        assert(ns->GetDouble("HighPrecisionPi") == origPi);
+
+        // 2. String with escape characters (\t, \n, \r, \\)
+        std::string complexStr = "Path: C:\\Games\\Enshrouded\tItem\tValue\nNewline\rCarriage";
+        ns->SetString("EscapedPath", complexStr);
+        assert(ns->GetString("EscapedPath") == complexStr);
+
+        // 3. Binary blob with embedded nulls and arbitrary bytes
+        std::vector<uint8_t> rawBlob = { 0x00, 0x11, 0x00, 0xAA, 0xFF, 0x42, 0x00, 0x7E };
+        ns->SetBlob("BinaryData", rawBlob.data(), rawBlob.size());
+        auto retrievedBlob = ns->GetBlob("BinaryData");
+        assert(retrievedBlob == rawBlob);
+
+        // 4. Version counter & Dirty tracking
+        assert(ns->IsDirty());
+        bool flushOk = store.FlushNamespace("TestHarden73");
+        assert(flushOk);
+        assert(!ns->IsDirty());
+
+        // 5. Serialize and Deserialize round-trip
+        std::string serialized = ns->Serialize();
+        dreamkurumi::DreamStoreNamespace freshNs("TestHarden73_Copy");
+        freshNs.Deserialize(serialized);
+
+        assert(freshNs.GetDouble("HighPrecisionPi") == origPi);
+        assert(freshNs.GetString("EscapedPath") == complexStr);
+        assert(freshNs.GetBlob("BinaryData") == rawBlob);
+
+        std::cout << "  Double 17-digit precision preservation -> [PASS]\n";
+        std::cout << "  String escaping (tabs, newlines, backslashes) round-trip -> [PASS]\n";
+        std::cout << "  Binary blob with null bytes serialization & hex decoding -> [PASS]\n";
+        std::cout << "  Version counter race-free dirty status tracking -> [PASS]\n";
+        std::cout << "  [PASS] Test 73 (DreamStore Hardening) fully verified!\n\n";
+    }
+
+    // ============================================================================
+    // Test 74: DreamRpcMultiplexer Anti-Spoofing & Rate Limiting
+    // ============================================================================
+    {
+        std::cout << "[Test 74] Testing DreamRpcMultiplexer Anti-Spoofing & Rate Limiting...\n";
+        auto& rpc = dreamkurumi::DreamRpcMultiplexer::Instance();
+
+        bool called = false;
+        rpc.RegisterRpc("TestSecurityRpc", [&](dreamkurumi::RpcInvocationContext&) {
+            called = true;
+        });
+
+        dreamkurumi::NetBufferWriter writer;
+        writer.WriteString("Payload");
+        auto payload = writer.GetBuffer();
+        uint64_t hash = dreamkurumi::DreamHash::Hash("TestSecurityRpc");
+
+        // 1. Anti-Spoofing: Client transport ID is 501, but frame claims callerId == 0 (Server authority)
+        auto spoofFrame = dreamkurumi::DreamRpcMultiplexer::PackRpcFrame(0, 0, hash, payload);
+        called = false;
+        bool consumed = rpc.ProcessIncomingRaw(spoofFrame.data(), spoofFrame.size(), 501);
+        assert(consumed);
+        assert(!called); // Blocked! Spoofing detected
+        std::cout << "  Server authority spoofing (frame caller 0 with peer transport 501) rejected -> [PASS]\n";
+
+        // 2. Default DENY: Remote caller 808 with no permission validator for registered RPC
+        rpc.SetPermissionValidator(nullptr); // Clear validator -> strict default DENY
+        auto normalRemoteFrame = dreamkurumi::DreamRpcMultiplexer::PackRpcFrame(808, 0, hash, payload);
+        called = false;
+        rpc.ProcessIncomingRaw(normalRemoteFrame.data(), normalRemoteFrame.size(), 808);
+        assert(!called); // Blocked by default DENY
+        std::cout << "  Remote caller invocation without validator blocked by default DENY -> [PASS]\n";
+
+        // Authorize caller 808
+        rpc.SetPermissionValidator([](uint32_t callerId, uint64_t) {
+            return callerId == 808;
+        });
+        called = false;
+        rpc.ProcessIncomingRaw(normalRemoteFrame.data(), normalRemoteFrame.size(), 808);
+        assert(called); // Allowed
+        std::cout << "  Permission validator allow check passed -> [PASS]\n";
+
+        // 3. Rate Limiting: Blast 130 calls from fresh caller 999 (limit is 120/sec)
+        rpc.SetPermissionValidator([](uint32_t callerId, uint64_t) {
+            return callerId == 808 || callerId == 999;
+        });
+        size_t successfulCalls = 0;
+        rpc.RegisterRpc("RateLimitTest", [&](dreamkurumi::RpcInvocationContext&) {
+            successfulCalls++;
+        });
+        uint64_t rlHash = dreamkurumi::DreamHash::Hash("RateLimitTest");
+        auto rlFrame = dreamkurumi::DreamRpcMultiplexer::PackRpcFrame(999, 0, rlHash, payload);
+
+        for (int i = 0; i < 130; ++i) {
+            rpc.ProcessIncomingRaw(rlFrame.data(), rlFrame.size(), 999);
+        }
+        // Exactly 120 calls should succeed; calls 121..130 should be dropped by rate limiter
+        assert(successfulCalls == 120);
+        std::cout << "  Per-caller rate limiter enforced (120/sec threshold) -> [PASS]\n";
+
+        // 4. Duplicate RPC registration rejection
+        bool dupOk = rpc.RegisterRpc("TestSecurityRpc", [](dreamkurumi::RpcInvocationContext&) {});
+        assert(!dupOk);
+        std::cout << "  Duplicate RPC name registration rejected -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 74 (DreamRpcMultiplexer Anti-Spoofing & Rate Limiting) fully verified!\n\n";
+    }
+
     // Cleanly stop any background singletons before process exit
     dreamkurumi::DreamToast::Instance().Shutdown();
     dreamkurumi::DreamWatchdog::Instance().Stop();
@@ -2731,7 +2996,7 @@ int main() {
     dreamkurumi::DreamCrashGuard::Shutdown();
 
     std::cout << "============================================================\n";
-    std::cout << " ALL 69 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
+    std::cout << " ALL 74 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
     std::cout << "============================================================\n" << std::flush;
 
     TerminateProcess(GetCurrentProcess(), 0);

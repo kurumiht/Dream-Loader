@@ -25,7 +25,7 @@ namespace dreamkurumi {
 #define VK_FORMAT_UNDEFINED 0
 #endif
 
-#ifndef VULKAN_H_
+#if !defined(VULKAN_H_) && !defined(VK_VERSION_1_0)
 typedef uint32_t VkFlags;
 typedef VkFlags VkImageUsageFlags;
 typedef int32_t VkFormat;
@@ -105,14 +105,19 @@ public:
         VkSwapchainCreateInfoKHR modifiedInfo = *pCreateInfo;
         modifiedInfo.imageUsage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-        // If oldSwapchain is provided, retire its cached resources BEFORE driver reuses the handle address (ABA)
-        if (pCreateInfo->oldSwapchain != VK_NULL_HANDLE) {
-            std::unique_lock lock(m_mutex);
-            m_swapchains.erase(pCreateInfo->oldSwapchain);
+        VkResult res = origCreateSwapchain(device, &modifiedInfo, pAllocator, pSwapchain);
+        if (res != VK_SUCCESS) {
+            modifiedInfo = *pCreateInfo; // Retry with game's original flags
+            res = origCreateSwapchain(device, pCreateInfo, pAllocator, pSwapchain);
         }
 
-        VkResult res = origCreateSwapchain(device, &modifiedInfo, pAllocator, pSwapchain);
         if (res == VK_SUCCESS && pSwapchain && *pSwapchain != VK_NULL_HANDLE) {
+            // Swapchain successfully created: Now safely retire oldSwapchain if different from new handle
+            if (pCreateInfo->oldSwapchain != VK_NULL_HANDLE && pCreateInfo->oldSwapchain != *pSwapchain) {
+                std::unique_lock lock(m_mutex);
+                m_swapchains.erase(pCreateInfo->oldSwapchain);
+            }
+
             SwapchainContext ctx{};
             ctx.device     = device;
             ctx.swapchain  = *pSwapchain;

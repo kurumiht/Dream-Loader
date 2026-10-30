@@ -17,10 +17,10 @@ namespace dreamkurumi {
 //   "-rc"      : Release candidate after in-game live verification
 //   "" (clean) : Stable production release
 // ============================================================================
-#define DREAM_FRAMEWORK_VERSION       "3.8.3"
+#define DREAM_FRAMEWORK_VERSION       "3.8.4"
 #define DREAM_FRAMEWORK_VERSION_MAJOR 3
 #define DREAM_FRAMEWORK_VERSION_MINOR 8
-#define DREAM_FRAMEWORK_VERSION_PATCH 3
+#define DREAM_FRAMEWORK_VERSION_PATCH 4
 #define DREAM_FRAMEWORK_VERSION_TAG   ""
 
 // ============================================================================

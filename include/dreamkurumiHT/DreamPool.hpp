@@ -78,9 +78,7 @@ public:
 
 private:
     DreamTrampolinePool() = default;
-    ~DreamTrampolinePool() {
-        ReleaseAll();
-    }
+    ~DreamTrampolinePool() = default; // Let OS reclaim virtual pages at process exit to avoid shutdown UAF/crashes
 
     void* AllocateInternal(void* target, size_t size, size_t alignment, ChunkKind kind) {
         if (!target || size == 0) return nullptr;
@@ -116,7 +114,7 @@ private:
 
         // 2. Allocate a new 64KB page near target
         constexpr size_t DEFAULT_CHUNK_SIZE = 64 * 1024; // 64 KB
-        constexpr size_t UNWIND_HEADER_SIZE = 32;       // Reserve 32 bytes for chunk unwind header in MidHook chunks
+        constexpr size_t UNWIND_HEADER_SIZE = 64;       // Reserve 64 bytes for chunk MinimalUnwindInfo (44 bytes)
         size_t totalNeeded = (kind == ChunkKind::MidHookFramed) ? (size + UNWIND_HEADER_SIZE) : size;
         size_t allocSize = (totalNeeded > DEFAULT_CHUNK_SIZE) ? ((totalNeeded + 0xFFFF) & ~0xFFFF) : DEFAULT_CHUNK_SIZE;
 

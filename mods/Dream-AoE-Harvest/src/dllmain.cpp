@@ -113,6 +113,7 @@ uintptr_t s_guard3Rva = 0;
 // Dynamic offer backup for AoE batch candidates in Pipeline 2
 uint8_t s_primaryOfferBackup[56] = {0};
 std::atomic<bool> s_hasPrimaryOffer{false};
+std::atomic<bool> g_isExpandingCropBatch{false};
 
 struct CropCandidate {
     uint32_t entId;
@@ -139,9 +140,39 @@ inline bool IsValidWorldPtr(void* p) {
     return (capacity >= 4 && capacity <= 10000000);
 }
 
+inline bool IsContainerArchetype(const void* pArch) {
+    if (!pArch || !IsValidPtr(pArch)) return false;
+    const uint64_t* compWords = reinterpret_cast<const uint64_t*>(reinterpret_cast<const char*>(pArch) + 0x20);
+    uint64_t word4 = 0, word5 = 0;
+    if (!SafeRead(&compWords[0], word4) || !SafeRead(&compWords[1], word5)) return false;
+
+    constexpr uint64_t CONTAINER_WORD4_MASK = (1ULL << 52); // Inventory (0x174)
+    constexpr uint64_t CONTAINER_WORD5_MASK = (1ULL << 52) | (1ULL << 53) | (1ULL << 62); // Inventory (372), RandomLoot (373), DefaultInventory (382)
+
+    return ((word4 & CONTAINER_WORD4_MASK) != 0) || ((word5 & CONTAINER_WORD5_MASK) != 0);
+}
+
+inline bool IsHarvestableCropArchetype(const void* pArch) {
+    if (!pArch || !IsValidPtr(pArch)) return false;
+    if (IsContainerArchetype(pArch)) return false; // Definitely not a crop if it's a container/chest
+
+    // Word 1 (+0x08 in archetype): Comps 64..127
+    // Bit 43 (Comp 107 = 0x6B) is the harvestable plant/crop component
+    uint64_t compWord1 = 0;
+    if (!SafeRead(reinterpret_cast<const char*>(pArch) + 0x08, compWord1)) return false;
+    return (compWord1 & (1ULL << 43)) != 0;
+}
+
 // Hook for GetInteractionOffer (Pipeline 2)
 void* Hook_GetInteractionOffer(void* outTuple, void* arg2, void* arg3, void* pEntity, void* compMgr) {
     void* result = s_origGetInteractionOffer ? s_origGetInteractionOffer(outTuple, arg2, arg3, pEntity, compMgr) : outTuple;
+
+    // Strict Guard: ONLY synthesize offer during active AoE crop batch expansion!
+    // Prevents leaking or forging chest/door/NPC interaction offers into unrelated entities.
+    if (!g_isExpandingCropBatch.load()) {
+        return result;
+    }
+
     void** pTuple = reinterpret_cast<void**>(result);
     if (pTuple) {
         if (pTuple[0] != nullptr && IsValidPtr(pTuple[0])) {
@@ -186,6 +217,11 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t pri
     void* pPrimaryArch = nullptr;
     if (!SafeRead((char*)pPrimaryEntity + 0x18, pPrimaryArch) || !pPrimaryArch || !IsValidPtr(pPrimaryArch)) return;
 
+    // Strict Crop Guard: Primary entity MUST be a harvestable crop and NEVER a chest/container/NPC/door!
+    if (IsContainerArchetype(pPrimaryArch) || !IsHarvestableCropArchetype(pPrimaryArch)) {
+        return;
+    }
+
     int64_t pX = 0, pZ = 0;
     if (!GetEntityFixedPos(pPrimaryEntity, pX, pZ)) {
         return;
@@ -227,18 +263,12 @@ void FindNearbyCropCandidates(void* pContext, void* pPrimaryEntity, uint32_t pri
             void* pArch = nullptr;
             if (!SafeRead((char*)pEnt + 0x18, pArch) || !pArch || !IsValidPtr(pArch)) continue;
             
+            // Candidate entity MUST also be a harvestable crop and NEVER a container/chest/door/NPC
+            if (IsContainerArchetype(pArch) || !IsHarvestableCropArchetype(pArch)) continue;
+
             // Safe crop filter:
             // If sameCropOnly: candidate crop must match the primary crop archetype!
-            // If !sameCropOnly: matches primary crop archetype OR has Harvestable crop bit in Word 1 (Bit 43)
-            if (sameCropOnly) {
-                if (pArch != pPrimaryArch) continue;
-            } else {
-                if (pArch != pPrimaryArch) {
-                    uint64_t compWord1 = 0;
-                    SafeRead((char*)pArch + 0x08, compWord1);
-                    if ((compWord1 & (1ULL << 43)) == 0) continue;
-                }
-            }
+            if (sameCropOnly && pArch != pPrimaryArch) continue;
 
             // Distance check
             int64_t cX = 0, cZ = 0;
@@ -665,6 +695,10 @@ void OnExpandImmediateLootAction(void* pQueue, uint8_t* pRawChunk, void* pContex
     void* pPrimaryEntity = s_pfnGetEntity(pContext, primaryCropId);
     if (!pPrimaryEntity || !IsValidPtr(pPrimaryEntity)) return;
 
+    void* pPrimaryArch = nullptr;
+    if (!SafeRead((char*)pPrimaryEntity + 0x18, pPrimaryArch) || !pPrimaryArch || !IsValidPtr(pPrimaryArch)) return;
+    if (IsContainerArchetype(pPrimaryArch) || !IsHarvestableCropArchetype(pPrimaryArch)) return;
+
     uint32_t playerId = *(uint32_t*)(pRawChunk + 0x10);
     if (playerId == 0) {
         playerId = *(uint32_t*)(pRawChunk + 0x08);
@@ -748,8 +782,22 @@ void OnExpandImmediateLootBatch(uint8_t* pRawChunk, void* pContext, EventBatch* 
     void* pPrimaryEntity = s_pfnGetEntity(pContext, primaryCropId);
     if (!pPrimaryEntity || !IsValidPtr(pPrimaryEntity)) return;
 
-    // Reset primary offer backup flag so Iteration 0 captures fresh state
-    s_hasPrimaryOffer.store(false);
+    void* pPrimaryArch = nullptr;
+    if (!SafeRead((char*)pPrimaryEntity + 0x18, pPrimaryArch) || !pPrimaryArch || !IsValidPtr(pPrimaryArch)) return;
+    if (IsContainerArchetype(pPrimaryArch) || !IsHarvestableCropArchetype(pPrimaryArch)) return;
+
+    // RAII scope to guarantee offer spoofing is active ONLY during this crop expansion
+    struct CropBatchScope {
+        std::atomic<bool>& flag;
+        CropBatchScope(std::atomic<bool>& f) : flag(f) { 
+            s_hasPrimaryOffer.store(false);
+            flag.store(true); 
+        }
+        ~CropBatchScope() { 
+            flag.store(false); 
+            s_hasPrimaryOffer.store(false);
+        }
+    } cropBatchScope(g_isExpandingCropBatch);
 
     float radius = g_harvestRadius.load();
     bool sameCrop = g_sameCropOnly.load();

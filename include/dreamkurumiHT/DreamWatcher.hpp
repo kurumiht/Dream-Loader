@@ -9,6 +9,8 @@
 #include <chrono>
 #include "DreamLog.hpp"
 #include "DreamCrashGuard.hpp"
+#include "DreamScheduler.hpp"
+#include "DreamDispatcher.hpp"
 
 namespace dreamkurumi {
 
@@ -185,7 +187,17 @@ public:
             DREAM_LOG_INFO("DreamWatcher: Hot-Reloading mod '%s' (Generation #%llu)...",
                            changedPath.c_str(), info.reloadCount + 1);
 
-            // 1. Unload old instance
+            std::string modFilename = GetFilenameOnly(changedPath);
+            size_t dotPos = modFilename.find_last_of('.');
+            std::string modStem = (dotPos != std::string::npos) ? modFilename.substr(0, dotPos) : modFilename;
+
+            // 1. Purge scheduled tasks and central dispatcher hooks owned by this mod
+            DreamScheduler::Instance().CancelByOwner(modStem);
+            DreamScheduler::Instance().CancelByOwner(modFilename);
+            DreamCentralDispatcher::Instance().CancelByOwner(modStem);
+            DreamCentralDispatcher::Instance().CancelByOwner(modFilename);
+
+            // 2. Unload old instance
             if (onUnload && info.hModule) {
                 DreamCrashGuard::ExecuteSafely("ShadowUnload", [&]() {
                     onUnload(info.hModule);
@@ -194,19 +206,27 @@ public:
 
             // Wait for in-flight hook callbacks to drain before unmapping module
             auto tStart = std::chrono::steady_clock::now();
-            while (info.inFlight && info.inFlight->load() > 0) {
+            while ((info.inFlight && info.inFlight->load() > 0) ||
+                   DreamCentralDispatcher::Instance().GetTotalInFlightCount() > 0) {
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tStart).count() > 500) {
-                    DREAM_LOG_WARN("DreamWatcher: In-flight calls drained timeout (%d active), proceeding with FreeLibrary", info.inFlight->load());
+                    DREAM_LOG_WARN("DreamWatcher: In-flight calls drained timeout (%d active, dispatcher: %d), skipping FreeLibrary to prevent crash",
+                                   info.inFlight ? info.inFlight->load() : 0,
+                                   DreamCentralDispatcher::Instance().GetTotalInFlightCount());
                     break;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
 
-            if (info.hModule) {
-                FreeLibrary(info.hModule);
+            bool stillActive = (info.inFlight && info.inFlight->load() > 0) ||
+                               (DreamCentralDispatcher::Instance().GetTotalInFlightCount() > 0);
+            if (!stillActive) {
+                if (info.hModule) {
+                    FreeLibrary(info.hModule);
+                }
+                DeleteFileA(info.currentShadowPath.c_str());
+            } else {
+                DREAM_LOG_WARN("DreamWatcher: Preserving old module handle %p safely without FreeLibrary", info.hModule);
             }
-
-            DeleteFileA(info.currentShadowPath.c_str());
 
             // 2. Create new shadow copy
             std::string newShadow = "mods/.shadow/shadow_" + std::to_string(GetTickCount64()) + "_" + GetFilenameOnly(changedPath);

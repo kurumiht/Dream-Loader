@@ -18,7 +18,10 @@ namespace dreamkurumi {
 // Standard Vulkan WSI Definitions (Header-Only, Zero Vulkan SDK Dependency)
 // Dissected for Vulkan 1.3 presentation pipeline in Enshrouded
 // ============================================================================
+#ifndef VK_VERSION_1_0
+#ifndef VK_STRUCTURE_TYPE_PRESENT_INFO_KHR
 #define VK_STRUCTURE_TYPE_PRESENT_INFO_KHR 1000001001
+#endif
 
 typedef void* VkQueue;
 typedef int32_t VkResult;
@@ -36,6 +39,7 @@ struct VkPresentInfoKHR {
 };
 
 typedef VkResult (__stdcall *PFN_vkQueuePresentKHR)(VkQueue queue, const VkPresentInfoKHR* pPresentInfo);
+#endif
 
 // ============================================================================
 // DreamVulkan - Native Vulkan Presentation Interceptor & In-Game GUI Hook
@@ -136,10 +140,12 @@ public:
             });
         }
 
-        // Native In-Game ImGui Diagnostic Overlay (Item 7)
-        DreamDiagnosticOverlay::Instance().UpdateMetrics(m_currentFps.load(), (m_currentFps.load() > 0.0f) ? (1000.0f / m_currentFps.load()) : 16.6f);
-        DreamDiagnosticOverlay::Instance().PollInput();
-        DreamDiagnosticOverlay::Instance().OnVulkanPresent();
+        // Native In-Game ImGui Diagnostic Overlay
+        DreamCrashGuard::ExecuteSafely("VulkanDiagOverlay", [&]() {
+            DreamDiagnosticOverlay::Instance().UpdateMetrics(m_currentFps.load(), (m_currentFps.load() > 0.0f) ? (1000.0f / m_currentFps.load()) : 16.6f);
+            DreamDiagnosticOverlay::Instance().PollInput();
+            DreamDiagnosticOverlay::Instance().OnVulkanPresent();
+        });
 
         // When in-game menu is toggled open via F9, trigger overlay render
         if (DreamOverlay::Instance().IsMenuOpen()) {

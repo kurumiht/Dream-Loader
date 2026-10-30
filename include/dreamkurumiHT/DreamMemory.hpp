@@ -43,17 +43,34 @@ public:
         return false; // Caller keeps last known good snapshot
     }
 
-    // Safe memory writing with automatic VirtualProtect (PAGE_EXECUTE_READWRITE)
+    // Safe memory writing with smart protection query (avoids syscall if already writable)
     template <typename T>
     static bool Write(void* address, const T& value) {
         if (!MemoryHelper::IsValidPtr(address)) return false;
         bool ok = false;
         DreamCrashGuard::ExecuteSafely("MemoryWrite", [&]() {
-            ScopedMemoryProtect prot(address, sizeof(T), PAGE_EXECUTE_READWRITE);
-            if (prot.IsSuccess()) {
-                *reinterpret_cast<T*>(address) = value;
-                MemoryHelper::FlushCache(address, sizeof(T));
-                ok = true;
+            MEMORY_BASIC_INFORMATION mbi{};
+            if (VirtualQuery(address, &mbi, sizeof(mbi))) {
+                constexpr DWORD WRITABLE_MASK = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+                if ((mbi.Protect & WRITABLE_MASK) != 0) {
+                    // Already writable! Direct write with zero syscall overhead
+                    *reinterpret_cast<T*>(address) = value;
+                    ok = true;
+                    return;
+                }
+
+                // Preserve non-executable DEP for data: only use PAGE_EXECUTE_READWRITE if code
+                bool isExec = (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+                DWORD newProt = isExec ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+
+                ScopedMemoryProtect prot(address, sizeof(T), newProt);
+                if (prot.IsSuccess()) {
+                    *reinterpret_cast<T*>(address) = value;
+                    if (isExec) {
+                        MemoryHelper::FlushCache(address, sizeof(T));
+                    }
+                    ok = true;
+                }
             }
         });
         return ok;

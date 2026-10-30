@@ -32,53 +32,72 @@ public:
     }
 
     // Run a task on the next game frame / main thread tick
-    TaskId Enqueue(TaskFn task) {
+    TaskId Enqueue(TaskFn task, std::string owner = "") {
         if (!task) return 0;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         TaskId id = ++m_nextId;
-        m_immediateQueue.push_back({ id, std::move(task) });
+        m_immediateQueue.push_back({ id, std::move(task), std::move(owner) });
         return id;
     }
 
     // Run a task once after delayMs milliseconds
-    TaskId RunAfter(uint32_t delayMs, TaskFn task) {
+    TaskId RunAfter(uint32_t delayMs, TaskFn task, std::string owner = "") {
         if (!task) return 0;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         TaskId id = ++m_nextId;
         auto runAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs);
-        m_delayedTasks.push_back({ id, std::move(task), runAt });
+        m_delayedTasks.push_back({ id, std::move(task), runAt, std::move(owner) });
         return id;
     }
 
     // Run a task recurringly every intervalMs milliseconds.
     // If task() returns false, it will automatically cancel.
-    TaskId RunEvery(uint32_t intervalMs, RecurringTaskFn task) {
+    TaskId RunEvery(uint32_t intervalMs, RecurringTaskFn task, std::string owner = "") {
         if (!task) return 0;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         TaskId id = ++m_nextId;
         auto runAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(intervalMs);
-        m_recurringTasks.push_back({ id, std::move(task), intervalMs, runAt });
+        m_recurringTasks.push_back({ id, std::move(task), intervalMs, runAt, std::move(owner) });
         return id;
     }
 
     // Coroutine-style yield: tests predicate on each tick.
     // When predicate returns true, onReady is executed.
     // If timeoutMs > 0 and timeout expires, onTimeout (if provided) is executed.
-    TaskId YieldUntil(PredicateFn predicate, TaskFn onReady, uint32_t timeoutMs = 0, TaskFn onTimeout = nullptr) {
+    TaskId YieldUntil(PredicateFn predicate, TaskFn onReady, uint32_t timeoutMs = 0, TaskFn onTimeout = nullptr, std::string owner = "") {
         if (!predicate || !onReady) return 0;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         TaskId id = ++m_nextId;
         auto startTime = std::chrono::steady_clock::now();
-        m_yieldTasks.push_back({ id, std::move(predicate), std::move(onReady), std::move(onTimeout), startTime, timeoutMs });
+        m_yieldTasks.push_back({ id, std::move(predicate), std::move(onReady), std::move(onTimeout), startTime, timeoutMs, std::move(owner) });
         return id;
     }
 
     // Cancel a scheduled task by ID
     bool Cancel(TaskId id) {
         if (id == 0) return false;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_cancelledIds.insert(id);
         return true;
+    }
+
+    // Cancel all scheduled tasks belonging to a specific owner/mod
+    size_t CancelByOwner(const std::string& ownerId) {
+        if (ownerId.empty()) return 0;
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        size_t count = 0;
+        auto cancelMatches = [&](const auto& task) {
+            if (task.owner == ownerId) {
+                m_cancelledIds.insert(task.id);
+                count++;
+            }
+        };
+        for (const auto& t : m_immediateQueue) cancelMatches(t);
+        for (const auto& t : m_delayedTasks) cancelMatches(t);
+        for (const auto& t : m_recurringTasks) cancelMatches(t);
+        for (const auto& t : m_yieldTasks) cancelMatches(t);
+        DREAM_LOG_INFO("DreamScheduler: CancelByOwner purged %zu tasks for owner '%s'", count, ownerId.c_str());
+        return count;
     }
 
     // Headless Dedicated Server tick entry point (Vulkan is absent on headless server)
@@ -91,6 +110,16 @@ public:
     // maxTimeBudgetMs: Max execution duration before deferring remaining tasks to next frame.
     // Recommended default: 1.0ms to prevent frame drops on 144Hz+ displays.
     size_t Tick(double maxTimeBudgetMs = 1.0) {
+        // Reentrancy / multi-thread concurrency guard: Only 1 thread may pump the scheduler at a time
+        bool expectedTicking = false;
+        if (!m_isTicking.compare_exchange_strong(expectedTicking, true)) {
+            return 0;
+        }
+        struct TickingScope {
+            std::atomic<bool>& flag;
+            ~TickingScope() { flag.store(false, std::memory_order_release); }
+        } tickingScope{m_isTicking};
+
         auto startTime = std::chrono::steady_clock::now();
         size_t executedCount = 0;
 
@@ -105,7 +134,7 @@ public:
         {
             std::vector<YieldTask> activeYields;
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
+                std::lock_guard<std::recursive_mutex> lock(m_mutex);
                 activeYields.swap(m_yieldTasks);
             }
 
@@ -141,7 +170,7 @@ public:
             }
 
             if (!remainingYields.empty()) {
-                std::lock_guard<std::mutex> lock(m_mutex);
+                std::lock_guard<std::recursive_mutex> lock(m_mutex);
                 m_yieldTasks.insert(m_yieldTasks.begin(),
                                     std::make_move_iterator(remainingYields.begin()),
                                     std::make_move_iterator(remainingYields.end()));
@@ -153,7 +182,7 @@ public:
             std::vector<DelayedTask> readyTasks;
             auto now = std::chrono::steady_clock::now();
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
+                std::lock_guard<std::recursive_mutex> lock(m_mutex);
                 auto it = m_delayedTasks.begin();
                 while (it != m_delayedTasks.end()) {
                     if (IsCancelled(it->id)) {
@@ -181,7 +210,7 @@ public:
             std::vector<RecurringTask> tasksToRun;
             auto now = std::chrono::steady_clock::now();
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
+                std::lock_guard<std::recursive_mutex> lock(m_mutex);
                 for (auto& rt : m_recurringTasks) {
                     if (!IsCancelled(rt.id) && rt.nextRunAt <= now) {
                         tasksToRun.push_back(rt);
@@ -207,7 +236,7 @@ public:
         if (!isTimeExhausted()) {
             std::deque<ImmediateTask> tasksToRun;
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
+                std::lock_guard<std::recursive_mutex> lock(m_mutex);
                 tasksToRun.swap(m_immediateQueue);
             }
 
@@ -225,7 +254,7 @@ public:
                 if (isTimeExhausted()) {
                     // Put remaining unexecuted tasks back into front of queue
                     if (!tasksToRun.empty()) {
-                        std::lock_guard<std::mutex> lock(m_mutex);
+                        std::lock_guard<std::recursive_mutex> lock(m_mutex);
                         while (!tasksToRun.empty()) {
                             m_immediateQueue.push_front(std::move(tasksToRun.back()));
                             tasksToRun.pop_back();
@@ -238,7 +267,7 @@ public:
 
         // Clean up cancelled tasks
         {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
             if (!m_cancelledIds.empty()) {
                 m_delayedTasks.erase(
                     std::remove_if(m_delayedTasks.begin(), m_delayedTasks.end(),
@@ -263,12 +292,12 @@ public:
     }
 
     size_t GetPendingTaskCount() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         return m_immediateQueue.size() + m_delayedTasks.size() + m_recurringTasks.size() + m_yieldTasks.size();
     }
 
     void Reset() {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_immediateQueue.clear();
         m_delayedTasks.clear();
         m_recurringTasks.clear();
@@ -280,18 +309,21 @@ private:
     DreamScheduler() = default;
 
     bool IsCancelled(TaskId id) const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         return m_cancelledIds.find(id) != m_cancelledIds.end();
     }
 
     struct ImmediateTask {
         TaskId id;
         TaskFn task;
+        std::string owner;
     };
 
     struct DelayedTask {
         TaskId id;
         TaskFn task;
         std::chrono::steady_clock::time_point runAt;
+        std::string owner;
     };
 
     struct RecurringTask {
@@ -299,6 +331,7 @@ private:
         RecurringTaskFn task;
         uint32_t intervalMs;
         std::chrono::steady_clock::time_point nextRunAt;
+        std::string owner;
     };
 
     struct YieldTask {
@@ -308,9 +341,11 @@ private:
         TaskFn onTimeout;
         std::chrono::steady_clock::time_point startTime;
         uint32_t timeoutMs;
+        std::string owner;
     };
 
-    mutable std::mutex m_mutex;
+    mutable std::recursive_mutex m_mutex;
+    std::atomic<bool> m_isTicking{false};
     std::atomic<TaskId> m_nextId{0};
     std::deque<ImmediateTask> m_immediateQueue;
     std::vector<DelayedTask> m_delayedTasks;

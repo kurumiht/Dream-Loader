@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **โมเดิร์นเนทีฟ Harmony Hooking & Modding Framework สำหรับ C++20 บน Windows x64**  
 > *(ไม่ต้องเขียน Assembly, ไม่ต้องสแกนแรม, ดักจับผ่าน Hardware Breakpoint VEH, ประสิทธิภาพสูงสุดสำหรับ Keen Games Engine)*  
-> **เวอร์ชันของ Framework:** `3.8.3` | **สถาปัตยกรรม:** Windows x64 | **เกมที่รองรับ:** Enshrouded 1.0+
+> **เวอร์ชันของ Framework:** `3.8.4` | **สถาปัตยกรรม:** Windows x64 | **เกมที่รองรับ:** Enshrouded 1.0+
 
 ---
 
@@ -9,18 +9,18 @@
   <b>สลับภาษา / Language Switcher:</b><br>
   <a href="README.md">🇬🇧 <b>English</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.3/Dream-Core-v3.8.3.zip">
-    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.8.3%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.8.3 Framework" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Dream-Core-v3.8.4.zip">
+    <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--Core%20v3.8.4%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core v3.8.4 Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.3/Dream-AoE-Harvest-v3.8.3.zip">
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Dream-AoE-Harvest-v3.8.4.zip">
     <img src="https://img.shields.io/badge/%E0%B8%94%E0%B8%B2%E0%B8%A7%E0%B8%99%E0%B9%8C%E0%B9%82%E0%B8%AB%E0%B8%A5%E0%B8%94-Dream--AoE--Harvest%20(Mod%20Plugin)-blue?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-AoE-Harvest Mod" />
   </a>
 </p>
 
 ---
 
-## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (69 Master Capabilities)
+## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (74 Master Capabilities)
 
 > [!NOTE]
 > ### 💬 ข้อความจากผู้พัฒนา / จุดประสงค์ของโปรเจกต์นี้
@@ -29,8 +29,8 @@
 >
 > **การแยกไฟล์ดาวน์โหลด (`Dream-Core` กับ `Dream-AoE-Harvest`):**  
 > เพื่อป้องกันความสับสนสำหรับผู้ใช้งาน—โดยเฉพาะในกรณีที่คุณอาจจะมีม็อดตัวอื่นที่ทำงานคล้ายๆ กับเราอยู่แล้ว—จึงได้ทำการแยกไฟล์ Zip ดาวน์โหลดออกจากกันอย่างอิสระ:  
-> * 📦 **`Dream-Core-v3.8.3.zip`**: ตัวแกนหลักของ Harmony Hooking Engine และ Native Loader สำหรับ Enshrouded (ประกอบด้วย Header C++20, ตัว Loader, และ Template) จะไม่มีตัวม็อดเกมพ่วงไปด้วย  
-> * 🌾 **`Dream-AoE-Harvest-v3.8.3.zip`**: ตัวม็อด AoE Harvest (เกี่ยวพืชผลอัตโนมัติรอบตัว 3.5 เมตร, กดเปิด-ปิดด้วย `F8`) แยกไว้ต่างหาก สามารถดาวน์โหลดไปแตกไฟล์ลงโฟลเดอร์ `mods/` แล้วเปิดเล่นได้ทันที
+> * 📦 **`Dream-Core-v3.8.4.zip`**: ตัวแกนหลักของ Harmony Hooking Engine และ Native Loader สำหรับ Enshrouded (ประกอบด้วย Header C++20, ตัว Loader, และ Template) จะไม่มีตัวม็อดเกมพ่วงไปด้วย  
+> * 🌾 **`Dream-AoE-Harvest-v3.8.4.zip`**: ตัวม็อด AoE Harvest (เกี่ยวพืชผลอัตโนมัติรอบตัว 3.5 เมตร, กดเปิด-ปิดด้วย `F8`) แยกไว้ต่างหาก สามารถดาวน์โหลดไปแตกไฟล์ลงโฟลเดอร์ `mods/` แล้วเปิดเล่นได้ทันที
 
 ---
 
@@ -256,7 +256,7 @@
 
 ---
 
-## ผลการทดสอบ (Verification Suite 69/69 ผ่านหมด 100%)
+## ผลการทดสอบ (Verification Suite 74/74 ผ่านหมด 100%)
 
 ```text
 [TEST 1] Testing DreamCache...                         -> [PASS]
@@ -330,7 +330,7 @@
 [TEST 69] Keen Games KFC4 Container Binary Validation   -> [PASS] (ตรวจสอบ Magic 0x3443464B 'KFC4' และสกัดเวอร์ชันคอนเทนเนอร์ 16 ไบต์สมบูรณ์!)
 ```
 
-**ผลการทดสอบผ่านทั้งหมด 69/69 รายการ! dreamkurumiHT ได้รับการตรวจสอบความสมบูรณ์ 100%!**
+**ผลการทดสอบผ่านทั้งหมด 74/74 รายการ! dreamkurumiHT ได้รับการตรวจสอบความสมบูรณ์ 100%!**
 
 ---
 

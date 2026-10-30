@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <mutex>
 #include <memory>
+#include <typeindex>
 #include <unordered_map>
 #include "DreamHook.hpp"
 #include "DreamPipeline.hpp"
@@ -106,9 +107,13 @@ public:
         return ok;
     }
 
-    void AddSubscriber(const std::string& modId, HookPriority priority, void* ownerKey, PrefixFn pfx, PostfixFn pfxPost) {
+    bool AddSubscriber(const std::string& modId, HookPriority priority, void* ownerKey, PrefixFn pfx, PostfixFn pfxPost) {
         std::lock_guard<std::mutex> lock(m_mutex);
-        EnsureInstalled();
+        if (!EnsureInstalled()) {
+            DREAM_LOG_ERROR("DreamCentralDispatcher: Failed to install central hook on 0x%p for mod '%s'",
+                            m_target, modId.c_str());
+            return false;
+        }
 
         for (auto& sub : m_subscribers) {
             if (sub.ownerKey == ownerKey || (!modId.empty() && sub.modId == modId)) {
@@ -116,7 +121,7 @@ public:
                 sub.prefix = pfx;
                 sub.postfix = pfxPost;
                 SortAndRebuildSnapshot();
-                return;
+                return true;
             }
         }
 
@@ -124,20 +129,42 @@ public:
         SortAndRebuildSnapshot();
         DREAM_LOG_INFO("DreamCentralDispatcher: Registered mod '%s' on 0x%p (Priority %d, Active subscribers: %zu)",
                        modId.c_str(), m_target, static_cast<int>(priority), m_subscribers.size());
+        return true;
     }
 
     void RemoveSubscriber(void* ownerKey) {
         std::lock_guard<std::mutex> lock(m_mutex);
+        std::string removedMod;
+        for (const auto& sub : m_subscribers) {
+            if (sub.ownerKey == ownerKey) {
+                removedMod = sub.modId;
+                break;
+            }
+        }
         auto it = std::remove_if(m_subscribers.begin(), m_subscribers.end(),
             [ownerKey](const Subscriber& s) { return s.ownerKey == ownerKey; });
         if (it != m_subscribers.end()) {
-            std::string removedMod = it->modId;
             m_subscribers.erase(it, m_subscribers.end());
             SortAndRebuildSnapshot();
             DREAM_LOG_INFO("DreamCentralDispatcher: Unregistered mod '%s' from 0x%p (Remaining subscribers: %zu)",
                            removedMod.c_str(), m_target, m_subscribers.size());
         }
     }
+
+    void RemoveSubscriberByModId(const std::string& modId) {
+        if (modId.empty()) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = std::remove_if(m_subscribers.begin(), m_subscribers.end(),
+            [&modId](const Subscriber& s) { return s.modId == modId; });
+        if (it != m_subscribers.end()) {
+            m_subscribers.erase(it, m_subscribers.end());
+            SortAndRebuildSnapshot();
+            DREAM_LOG_INFO("DreamCentralDispatcher: Purged subscriber '%s' from 0x%p (Remaining subscribers: %zu)",
+                           modId.c_str(), m_target, m_subscribers.size());
+        }
+    }
+
+    int32_t GetInFlightCount() const { return m_inFlight.load(std::memory_order_relaxed); }
 
     Ret CallOriginal(Args... args) {
         auto orig = reinterpret_cast<TargetFn>(m_hook.GetOriginal());
@@ -164,6 +191,16 @@ private:
     }
 
     Ret Dispatch(Args... args) {
+        struct InFlightGuard {
+            std::atomic<int32_t>& m_c;
+            explicit InFlightGuard(std::atomic<int32_t>& c) : m_c(c) {
+                m_c.fetch_add(1, std::memory_order_relaxed);
+            }
+            ~InFlightGuard() {
+                m_c.fetch_sub(1, std::memory_order_release);
+            }
+        } inFlightGuard(m_inFlight);
+
         std::shared_ptr<const Snapshot> snap = m_snapshot.load();
         auto orig = reinterpret_cast<TargetFn>(m_hook.GetOriginal());
 
@@ -206,6 +243,7 @@ private:
     DreamInlineHook m_hook;
     std::vector<Subscriber> m_subscribers;
     std::atomic<std::shared_ptr<const Snapshot>> m_snapshot;
+    std::atomic<int32_t> m_inFlight{0};
     std::mutex m_mutex;
 };
 
@@ -290,9 +328,13 @@ public:
         return ok;
     }
 
-    void AddSubscriber(const std::string& modId, HookPriority priority, void* ownerKey, PrefixFn pfx, PostfixFn pfxPost) {
+    bool AddSubscriber(const std::string& modId, HookPriority priority, void* ownerKey, PrefixFn pfx, PostfixFn pfxPost) {
         std::lock_guard<std::mutex> lock(m_mutex);
-        EnsureInstalled();
+        if (!EnsureInstalled()) {
+            DREAM_LOG_ERROR("DreamCentralDispatcher: Failed to install central hook on 0x%p for mod '%s'",
+                            m_target, modId.c_str());
+            return false;
+        }
 
         for (auto& sub : m_subscribers) {
             if (sub.ownerKey == ownerKey || (!modId.empty() && sub.modId == modId)) {
@@ -300,7 +342,7 @@ public:
                 sub.prefix = pfx;
                 sub.postfix = pfxPost;
                 SortAndRebuildSnapshot();
-                return;
+                return true;
             }
         }
 
@@ -308,20 +350,42 @@ public:
         SortAndRebuildSnapshot();
         DREAM_LOG_INFO("DreamCentralDispatcher: Registered mod '%s' on 0x%p (Priority %d, Active subscribers: %zu)",
                        modId.c_str(), m_target, static_cast<int>(priority), m_subscribers.size());
+        return true;
     }
 
     void RemoveSubscriber(void* ownerKey) {
         std::lock_guard<std::mutex> lock(m_mutex);
+        std::string removedMod;
+        for (const auto& sub : m_subscribers) {
+            if (sub.ownerKey == ownerKey) {
+                removedMod = sub.modId;
+                break;
+            }
+        }
         auto it = std::remove_if(m_subscribers.begin(), m_subscribers.end(),
             [ownerKey](const Subscriber& s) { return s.ownerKey == ownerKey; });
         if (it != m_subscribers.end()) {
-            std::string removedMod = it->modId;
             m_subscribers.erase(it, m_subscribers.end());
             SortAndRebuildSnapshot();
             DREAM_LOG_INFO("DreamCentralDispatcher: Unregistered mod '%s' from 0x%p (Remaining subscribers: %zu)",
                             removedMod.c_str(), m_target, m_subscribers.size());
         }
     }
+
+    void RemoveSubscriberByModId(const std::string& modId) {
+        if (modId.empty()) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = std::remove_if(m_subscribers.begin(), m_subscribers.end(),
+            [&modId](const Subscriber& s) { return s.modId == modId; });
+        if (it != m_subscribers.end()) {
+            m_subscribers.erase(it, m_subscribers.end());
+            SortAndRebuildSnapshot();
+            DREAM_LOG_INFO("DreamCentralDispatcher: Purged subscriber '%s' from 0x%p (Remaining subscribers: %zu)",
+                           modId.c_str(), m_target, m_subscribers.size());
+        }
+    }
+
+    int32_t GetInFlightCount() const { return m_inFlight.load(std::memory_order_relaxed); }
 
     void CallOriginal(Args... args) {
         auto orig = reinterpret_cast<TargetFn>(m_hook.GetOriginal());
@@ -347,6 +411,16 @@ private:
     }
 
     void Dispatch(Args... args) {
+        struct InFlightGuard {
+            std::atomic<int32_t>& m_c;
+            explicit InFlightGuard(std::atomic<int32_t>& c) : m_c(c) {
+                m_c.fetch_add(1, std::memory_order_relaxed);
+            }
+            ~InFlightGuard() {
+                m_c.fetch_sub(1, std::memory_order_release);
+            }
+        } inFlightGuard(m_inFlight);
+
         std::shared_ptr<const Snapshot> snap = m_snapshot.load();
         auto orig = reinterpret_cast<TargetFn>(m_hook.GetOriginal());
 
@@ -387,6 +461,7 @@ private:
     DreamInlineHook m_hook;
     std::vector<Subscriber> m_subscribers;
     std::atomic<std::shared_ptr<const Snapshot>> m_snapshot;
+    std::atomic<int32_t> m_inFlight{0};
     std::mutex m_mutex;
 };
 
@@ -400,16 +475,62 @@ public:
         return s_instance;
     }
 
+    struct HandlerEntry {
+        std::shared_ptr<void> handler;
+        std::type_index typeIndex{typeid(void)};
+        std::function<void(const std::string&)> cancelByOwner;
+        std::function<int32_t()> getInFlight;
+    };
+
     template <typename Ret, typename... Args>
     CentralDetourHandler<Ret, Args...>& GetHandler(void* target) {
         std::lock_guard<std::mutex> lock(m_mutex);
+        std::type_index reqType(typeid(CentralDetourHandler<Ret, Args...>));
         auto it = m_handlers.find(target);
         if (it == m_handlers.end()) {
             auto handler = std::make_shared<CentralDetourHandler<Ret, Args...>>(target);
-            m_handlers[target] = handler;
+            HandlerEntry entry;
+            entry.handler = handler;
+            entry.typeIndex = reqType;
+            entry.cancelByOwner = [handler](const std::string& modId) {
+                handler->RemoveSubscriberByModId(modId);
+            };
+            entry.getInFlight = [handler]() {
+                return handler->GetInFlightCount();
+            };
+            m_handlers[target] = entry;
             return *handler;
         }
-        return *std::static_pointer_cast<CentralDetourHandler<Ret, Args...>>(it->second);
+
+        if (it->second.typeIndex != reqType) {
+            DREAM_LOG_ERROR("DreamCentralDispatcher: Signature MISMATCH for hook target 0x%p! Expected %s, got %s",
+                            target, it->second.typeIndex.name(), reqType.name());
+            static CentralDetourHandler<Ret, Args...> s_rejectedDummy(nullptr);
+            return s_rejectedDummy;
+        }
+        return *std::static_pointer_cast<CentralDetourHandler<Ret, Args...>>(it->second.handler);
+    }
+
+    int32_t GetTotalInFlightCount() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        int32_t total = 0;
+        for (auto& [target, entry] : m_handlers) {
+            if (entry.getInFlight) {
+                total += entry.getInFlight();
+            }
+        }
+        return total;
+    }
+
+    void CancelByOwner(const std::string& modId) {
+        if (modId.empty()) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& [target, entry] : m_handlers) {
+            if (entry.cancelByOwner) {
+                entry.cancelByOwner(modId);
+            }
+        }
+        DREAM_LOG_INFO("DreamCentralDispatcher: CancelByOwner purged subscribers for mod '%s'", modId.c_str());
     }
 
     size_t GetActiveHookedTargetCount() {
@@ -420,7 +541,7 @@ public:
 private:
     DreamCentralDispatcher() = default;
     std::mutex m_mutex;
-    std::unordered_map<void*, std::shared_ptr<void>> m_handlers;
+    std::unordered_map<void*, HandlerEntry> m_handlers;
 };
 
 } // namespace dreamkurumi

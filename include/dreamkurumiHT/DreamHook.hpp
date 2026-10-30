@@ -171,14 +171,31 @@ public:
                 auto decoded = DreamDisasm::Decode(m_target + curOffset);
                 if (decoded.length == 0) return false;
 
+                // Relocation Guard: Reject unsupported LOOP/JRCXZ instructions (0xE0..0xE3)
+                if (DreamDisasm::IsLoopOrJrcxz(decoded.opcode)) {
+                    DREAM_LOG_WARN("DreamInlineHook: Cannot relocate LOOP/JRCXZ instruction (0x%02X) at 0x%p",
+                                   decoded.opcode, m_target + curOffset);
+                    return false;
+                }
+
+                // Relocation Guard: Reject terminal instructions (RET/JMP/INT3) in the middle of stolen bytes
+                if ((curOffset + decoded.length) < m_stolenLen &&
+                    DreamDisasm::IsTerminalInstruction(decoded.opcode, decoded.opcode2, decoded.modrmReg)) {
+                    DREAM_LOG_WARN("DreamInlineHook: Mid-region terminal instruction (0x%02X) detected at 0x%p",
+                                   decoded.opcode, m_target + curOffset);
+                    return false;
+                }
+
                 if (m_ipMapCount < 16) {
-                    m_ipMap[m_ipMapCount++] = { static_cast<uint8_t>(curOffset), static_cast<uint8_t>(trampOffset) };
+                    m_ipMap[m_ipMapCount++] = { static_cast<uint16_t>(curOffset), static_cast<uint16_t>(trampOffset) };
                 }
 
                 // Handle short unconditional jump EB rel8 -> widen to E9 rel32
                 if (decoded.opcode == 0xEB && decoded.length == 2) {
                     int8_t oldDisp = *reinterpret_cast<const int8_t*>(m_target + curOffset + 1);
                     uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + curOffset + 2) + oldDisp;
+                    // Branch bounds: reject jump inside stolen region
+                    if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
                     uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_trampoline + trampOffset + 5);
                     int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
                     if (newDisp < INT32_MIN || newDisp > INT32_MAX) return false;
@@ -193,6 +210,7 @@ public:
                 if ((decoded.opcode >= 0x70 && decoded.opcode <= 0x7F) && decoded.length == 2) {
                     int8_t oldDisp = *reinterpret_cast<const int8_t*>(m_target + curOffset + 1);
                     uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + curOffset + 2) + oldDisp;
+                    if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
                     uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_trampoline + trampOffset + 6);
                     int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
                     if (newDisp < INT32_MIN || newDisp > INT32_MAX) return false;
@@ -210,6 +228,7 @@ public:
                 if ((decoded.opcode == 0xE8 || decoded.opcode == 0xE9) && decoded.length == 5) {
                     int32_t oldDisp = *reinterpret_cast<const int32_t*>(m_target + curOffset + 1);
                     uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + curOffset + 5) + oldDisp;
+                    if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
                     uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_trampoline + trampOffset + 5);
                     int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
                     if (newDisp < INT32_MIN || newDisp > INT32_MAX) {
@@ -221,6 +240,7 @@ public:
                 else if (decoded.opcode == 0x0F && (decoded.opcode2 >= 0x80 && decoded.opcode2 <= 0x8F) && decoded.length == 6) {
                     int32_t oldDisp = *reinterpret_cast<const int32_t*>(m_target + curOffset + 2);
                     uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + curOffset + 6) + oldDisp;
+                    if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
                     uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_trampoline + trampOffset + 6);
                     int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
                     if (newDisp < INT32_MIN || newDisp > INT32_MAX) return false;
@@ -283,7 +303,6 @@ public:
         if (firstDecoded.length >= 5) {
             if (TryAtomicFiveBytePatch(m_target, static_cast<int32_t>(relOffset), firstDecoded.length)) {
                 if (m_stolenLen > 5) {
-                    ScopedThreadFreeze freeze(m_target + 5, m_stolenLen - 5, m_trampoline + 5, m_ipMap, m_ipMapCount);
                     ScopedMemoryProtect protect(m_target + 5, m_stolenLen - 5, PAGE_EXECUTE_READWRITE);
                     if (protect.IsSuccess()) {
                         std::memset(m_target + 5, 0x90, m_stolenLen - 5);
@@ -317,8 +336,8 @@ public:
     bool Disable() {
         if (!m_target || !m_isInstalled) return false;
 
-        // Freeze threads while restoring original bytes
-        ScopedThreadFreeze freeze(m_target, m_stolenLen, m_trampoline, m_ipMap, m_ipMapCount);
+        // Freeze threads while restoring original bytes (do not relocate to deactivated trampoline)
+        ScopedThreadFreeze freeze(nullptr, 0, nullptr);
 
         ScopedMemoryProtect protect(m_target, m_stolenLen, PAGE_EXECUTE_READWRITE);
         if (!protect.IsSuccess()) return false;
@@ -352,15 +371,45 @@ private:
 // ============================================================================
 class DreamMidHook {
 public:
-    static void DispatchSafeCallback(DreamCpuContext* ctx, void* userData, MidHookContextCallback cb) {
+    static void DispatchSafeCallback(DreamCpuContext* ctx, void* userData, MidHookContextCallback cb, DreamMidHook* hook = nullptr) {
         if (!cb || !ctx) return;
+        if (hook && hook->m_circuitTripped.load(std::memory_order_relaxed)) return;
+
+        // RAII In-Flight Tracking: Guarantees module hot-reload drains safely
+        struct InFlightGuard {
+            std::atomic<int32_t>* m_counter{nullptr};
+            explicit InFlightGuard(std::atomic<int32_t>* c) : m_counter(c) {
+                if (m_counter) m_counter->fetch_add(1, std::memory_order_relaxed);
+            }
+            ~InFlightGuard() {
+                if (m_counter) m_counter->fetch_sub(1, std::memory_order_release);
+            }
+        } inFlightGuard(hook ? &hook->m_inFlight : nullptr);
+
         ScopedFiberTebGuard fiberGuard; // Protects TEB StackBase/StackLimit during custom fiber execution
         try {
-            DreamCrashGuard::ExecuteSafely("MidHookCallback", [&]() {
+            bool ok = DreamCrashGuard::ExecuteSafely("MidHookCallback", [&]() {
                 cb(*ctx, userData);
             });
+            if (hook) {
+                if (ok) {
+                    hook->m_consecutiveFaults.store(0, std::memory_order_relaxed);
+                } else {
+                    uint32_t f = ++hook->m_consecutiveFaults;
+                    if (f >= 5) {
+                        hook->m_circuitTripped.store(true, std::memory_order_relaxed);
+                        DREAM_LOG_ERROR("DreamMidHook: Circuit breaker TRIPPED for hook at %p (5 consecutive faults). Callback disarmed.",
+                                        hook->m_target);
+                    }
+                }
+            }
         } catch (...) {
-            // Absorb any C++ exception so it NEVER crosses the JIT stub frame into RtlVirtualUnwind!
+            if (hook) {
+                uint32_t f = ++hook->m_consecutiveFaults;
+                if (f >= 5) {
+                    hook->m_circuitTripped.store(true, std::memory_order_relaxed);
+                }
+            }
         }
     }
 
@@ -431,6 +480,9 @@ public:
         // sub rsp, 0x200 (48 81 EC 00 02 00 00) -> 512 bytes for YMM0..YMM15 vector registers
         emit8(0x48); emit8(0x81); emit8(0xEC); emit32(0x200);
 
+        // mov rbp, rsp (48 89 E5) -> Prologue complete! Exactly matches MinimalUnwindInfo SizeOfProlog = 0x22
+        emit8(0x48); emit8(0x89); emit8(0xE5);
+
         bool useAvx = CpuSupportsAvx();
 
         if (useAvx) {
@@ -487,8 +539,8 @@ public:
         // cld (FC) -> guarantee Direction Flag DF=0 per Windows x64 ABI
         emit8(0xFC);
 
-        // mov rcx, rsp (48 89 E1) -> rcx = &DreamCpuContext
-        emit8(0x48); emit8(0x89); emit8(0xE1);
+        // mov rcx, rbp (48 89 E9) -> rcx = &DreamCpuContext
+        emit8(0x48); emit8(0x89); emit8(0xE9);
 
         // mov rdx, userData (48 BA [64-bit]) -> rdx = m_userData
         emit8(0x48); emit8(0xBA); emit64(reinterpret_cast<uint64_t>(m_userData));
@@ -496,8 +548,8 @@ public:
         // mov r8, callback (49 B8 [64-bit]) -> r8 = callback
         emit8(0x49); emit8(0xB8); emit64(reinterpret_cast<uint64_t>(callback));
 
-        // mov rbp, rsp (48 89 E5) -> save context rsp in rbp (rbp was pushed on stack)
-        emit8(0x48); emit8(0x89); emit8(0xE5);
+        // mov r9, this (49 B9 [64-bit]) -> r9 = this (DreamMidHook instance for per-hook circuit breaker)
+        emit8(0x49); emit8(0xB9); emit64(reinterpret_cast<uint64_t>(this));
 
         // and rsp, -16 (48 83 E4 F0) -> guarantee 16-byte stack alignment
         emit8(0x48); emit8(0x83); emit8(0xE4); emit8(0xF0);
@@ -583,52 +635,6 @@ public:
         emit8(0x58); // pop rax
         emit8(0x9D); // popfq
 
-        // Append stolen instructions
-        size_t stolenOffset = 0;
-        while (stolenOffset < m_stolenLen) {
-            auto decoded = DreamDisasm::Decode(m_target + stolenOffset);
-            if (decoded.length == 0) return false;
-
-            size_t instrStart = code.size();
-            for (size_t b = 0; b < decoded.length; ++b) {
-                code.push_back(m_target[stolenOffset + b]);
-            }
-
-            // Handle 0xEB short relative jump (convert to 0xE9 near jump)
-            if (decoded.opcode == 0xEB && decoded.length == 2) {
-                int8_t rel8 = static_cast<int8_t>(m_target[stolenOffset + 1]);
-                uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + 2) + rel8;
-                code.pop_back(); code.pop_back();
-                instrStart = code.size();
-                code.push_back(0xE9);
-                uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + 5);
-                int32_t newDisp = static_cast<int32_t>(destAddr - newInstrEnd);
-                emit32(newDisp);
-                stolenOffset += decoded.length;
-                continue;
-            }
-
-            // Handle 0xE8 (CALL rel32) and 0xE9 (JMP rel32) displacement fixups
-            if ((decoded.opcode == 0xE8 || decoded.opcode == 0xE9) && decoded.length == 5) {
-                int32_t oldDisp = *reinterpret_cast<const int32_t*>(m_target + stolenOffset + 1);
-                uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + 5) + oldDisp;
-                uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + 5);
-                int32_t newDisp = static_cast<int32_t>(destAddr - newInstrEnd);
-                *reinterpret_cast<int32_t*>(&code[instrStart + 1]) = newDisp;
-                stolenOffset += decoded.length;
-                continue;
-            }
-
-            if (decoded.isRipRelative && decoded.dispSize == 4) {
-                uintptr_t oldTargetAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + decoded.length) + decoded.dispVal;
-                uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + decoded.length);
-                int64_t newDisp = static_cast<int64_t>(oldTargetAddr - newInstrEnd);
-                *reinterpret_cast<int32_t*>(&code[instrStart + decoded.dispOffset]) = static_cast<int32_t>(newDisp);
-            }
-
-            stolenOffset += decoded.length;
-        }
-
         // Multi-Loader Coexistence: If target already has an E9/FF 25 hook, chain directly to foreign destination!
         bool existingForeignHook = false;
         uintptr_t foreignDest = 0;
@@ -643,12 +649,122 @@ public:
             existingForeignHook = true;
         }
 
-        if (existingForeignHook) {
+        m_ipMapCount = 0;
+        if (existingForeignHook && foreignDest != 0) {
             DREAM_LOG_INFO("DreamMidHook: Transparently chaining over foreign hook at 0x%p -> 0x%p", m_target, foreignDest);
+            m_ipMap[0] = { 0, static_cast<uint16_t>(code.size()) };
+            m_ipMapCount = 1;
             emit8(0xFF); emit8(0x25);
             emit32(0); // [rip + 0]
             emit64(foreignDest);
         } else {
+            // Append stolen instructions
+            size_t stolenOffset = 0;
+            while (stolenOffset < m_stolenLen) {
+                auto decoded = DreamDisasm::Decode(m_target + stolenOffset);
+                if (decoded.length == 0) return false;
+
+                // Relocation Guard: Reject unsupported LOOP/JRCXZ instructions (0xE0..0xE3)
+                if (DreamDisasm::IsLoopOrJrcxz(decoded.opcode)) {
+                    DREAM_LOG_WARN("DreamMidHook: Cannot relocate LOOP/JRCXZ instruction (0x%02X) at 0x%p",
+                                   decoded.opcode, m_target + stolenOffset);
+                    return false;
+                }
+
+                // Relocation Guard: Reject terminal instructions (RET/JMP/INT3) in the middle of stolen bytes
+                if ((stolenOffset + decoded.length) < m_stolenLen &&
+                    DreamDisasm::IsTerminalInstruction(decoded.opcode, decoded.opcode2, decoded.modrmReg)) {
+                    DREAM_LOG_WARN("DreamMidHook: Mid-region terminal instruction (0x%02X) detected at 0x%p",
+                                   decoded.opcode, m_target + stolenOffset);
+                    return false;
+                }
+
+                size_t instrStart = code.size();
+                if (m_ipMapCount < 16) {
+                    m_ipMap[m_ipMapCount++] = {
+                        static_cast<uint16_t>(stolenOffset),
+                        static_cast<uint16_t>(instrStart)
+                    };
+                }
+
+                // Handle 0xEB short relative jump (convert to 0xE9 near jump)
+                if (decoded.opcode == 0xEB && decoded.length == 2) {
+                    int8_t rel8 = static_cast<int8_t>(m_target[stolenOffset + 1]);
+                    uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + 2) + rel8;
+                    if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
+                    uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + 5);
+                    int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
+                    if (newDisp < INT32_MIN || newDisp > INT32_MAX) return false;
+                    code.push_back(0xE9);
+                    emit32(static_cast<int32_t>(newDisp));
+                    stolenOffset += 2;
+                    continue;
+                }
+
+                // Handle short conditional jump 70..7F rel8 -> widen to 0F 80..8F rel32
+                if ((decoded.opcode >= 0x70 && decoded.opcode <= 0x7F) && decoded.length == 2) {
+                    int8_t oldDisp = static_cast<int8_t>(m_target[stolenOffset + 1]);
+                    uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + 2) + oldDisp;
+                    if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
+                    uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + 6);
+                    int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
+                    if (newDisp < INT32_MIN || newDisp > INT32_MAX) return false;
+                    code.push_back(0x0F);
+                    code.push_back(static_cast<uint8_t>(0x80 + (decoded.opcode & 0x0F)));
+                    emit32(static_cast<int32_t>(newDisp));
+                    stolenOffset += 2;
+                    continue;
+                }
+
+                // Handle 0xE8 (CALL rel32) and 0xE9 (JMP rel32) displacement fixups
+                if ((decoded.opcode == 0xE8 || decoded.opcode == 0xE9) && decoded.length == 5) {
+                    int32_t oldDisp = *reinterpret_cast<const int32_t*>(m_target + stolenOffset + 1);
+                    uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + 5) + oldDisp;
+                    if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
+                    uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + 5);
+                    int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
+                    if (newDisp < INT32_MIN || newDisp > INT32_MAX) return false;
+                    code.push_back(decoded.opcode);
+                    emit32(static_cast<int32_t>(newDisp));
+                    stolenOffset += 5;
+                    continue;
+                }
+
+                // Handle 0F 80..8F (Near conditional jump Jcc rel32, 6 bytes)
+                if (decoded.opcode == 0x0F && (decoded.opcode2 >= 0x80 && decoded.opcode2 <= 0x8F) && decoded.length == 6) {
+                    int32_t oldDisp = *reinterpret_cast<const int32_t*>(m_target + stolenOffset + 2);
+                    uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + 6) + oldDisp;
+                    if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
+                    uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + 6);
+                    int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
+                    if (newDisp < INT32_MIN || newDisp > INT32_MAX) return false;
+                    code.push_back(0x0F);
+                    code.push_back(decoded.opcode2);
+                    emit32(static_cast<int32_t>(newDisp));
+                    stolenOffset += 6;
+                    continue;
+                }
+
+                // Copy instruction bytes
+                for (size_t b = 0; b < decoded.length; ++b) {
+                    code.push_back(m_target[stolenOffset + b]);
+                }
+
+                // Handle RIP-relative ModR/M addressing (e.g. mov rax, [rip + disp32])
+                if (decoded.isRipRelative && decoded.dispSize == 4) {
+                    uintptr_t oldTargetAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + decoded.length) + decoded.dispVal;
+                    uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + decoded.length);
+                    int64_t newDisp = static_cast<int64_t>(oldTargetAddr - newInstrEnd);
+                    if (newDisp < INT32_MIN || newDisp > INT32_MAX) {
+                        DREAM_LOG_WARN("DreamMidHook: RIP-relative operand out of +-2GB range at 0x%p", m_target + stolenOffset);
+                        return false;
+                    }
+                    *reinterpret_cast<int32_t*>(&code[instrStart + decoded.dispOffset]) = static_cast<int32_t>(newDisp);
+                }
+
+                stolenOffset += decoded.length;
+            }
+
             // Jump back to target + stolenLen (FF 25 00 00 00 00 [64-bit])
             emit8(0xFF); emit8(0x25);
             emit32(0); // [rip + 0]
@@ -666,8 +782,8 @@ public:
     bool Enable() {
         if (!m_target || !m_stubPage || m_isInstalled) return false;
 
-        // Freeze worker threads during mid-hook patching
-        ScopedThreadFreeze freeze(m_target, m_stolenLen, m_stubPage);
+        // Freeze worker threads during mid-hook patching with accurate instruction pointer mapping
+        ScopedThreadFreeze freeze(m_target, m_stolenLen, m_stubPage, m_ipMap, m_ipMapCount);
 
         ScopedMemoryProtect protect(m_target, m_stolenLen, PAGE_EXECUTE_READWRITE);
         if (!protect.IsSuccess()) return false;
@@ -691,8 +807,8 @@ public:
     bool Disable() {
         if (!m_target || !m_isInstalled) return false;
 
-        // Freeze worker threads during restore
-        ScopedThreadFreeze freeze(m_target, m_stolenLen, m_stubPage);
+        // Freeze worker threads during restore (do not relocate to deactivated stub)
+        ScopedThreadFreeze freeze(nullptr, 0, nullptr);
 
         ScopedMemoryProtect protect(m_target, m_stolenLen, PAGE_EXECUTE_READWRITE);
         if (!protect.IsSuccess()) return false;
@@ -707,12 +823,21 @@ public:
         return Install(hookSite, reinterpret_cast<MidHookContextCallback>(callback), nullptr);
     }
 
+    bool IsInstalled() const { return m_isInstalled; }
+    void* GetTarget() const { return m_target; }
+    int32_t GetInFlightCount() const { return m_inFlight.load(std::memory_order_relaxed); }
+
 private:
     uint8_t* m_target{nullptr};
     uint8_t* m_stubPage{nullptr};
     MidHookContextCallback m_callback{nullptr};
     void* m_userData{nullptr};
     size_t m_stolenLen{0};
+    DreamIpMap m_ipMap[16]{};
+    size_t m_ipMapCount{0};
+    std::atomic<uint32_t> m_consecutiveFaults{0};
+    std::atomic<bool> m_circuitTripped{false};
+    std::atomic<int32_t> m_inFlight{0};
     std::vector<uint8_t> m_originalBytes;
     bool m_isInstalled{false};
 };
@@ -745,6 +870,7 @@ public:
             auto chain = std::make_unique<ChainNode>();
             chain->target = target;
             chain->subscribers.push_back({ name, cb, priority });
+            chain->subscribersSnapshot.store(std::make_shared<const std::vector<Subscriber>>(chain->subscribers));
 
             bool ok = chain->midHook.Install(target, &DreamChainedHookPipeline::Dispatcher, chain.get());
             if (!ok) return false;
@@ -758,6 +884,7 @@ public:
         std::sort(chain->subscribers.begin(), chain->subscribers.end(), [](const Subscriber& a, const Subscriber& b) {
             return a.priority > b.priority;
         });
+        chain->subscribersSnapshot.store(std::make_shared<const std::vector<Subscriber>>(chain->subscribers));
         return true;
     }
 
@@ -766,27 +893,30 @@ private:
         void* target{nullptr};
         DreamMidHook midHook;
         std::vector<Subscriber> subscribers;
+        std::atomic<std::shared_ptr<const std::vector<Subscriber>>> subscribersSnapshot;
     };
 
     static void Dispatcher(DreamCpuContext& ctx, void* userData) {
         auto* node = reinterpret_cast<ChainNode*>(userData);
-        if (node) {
-            for (const auto& sub : node->subscribers) {
-                if (sub.callback) {
-                    LARGE_INTEGER freq, t0, t1;
-                    QueryPerformanceFrequency(&freq);
-                    QueryPerformanceCounter(&t0);
+        if (!node) return;
+        auto snap = node->subscribersSnapshot.load();
+        if (!snap) return;
 
-                    DreamCrashGuard::ExecuteSafely(sub.name.empty() ? "ChainedSubscriber" : sub.name.c_str(), [&]() {
-                        sub.callback(ctx);
-                    });
+        for (const auto& sub : *snap) {
+            if (sub.callback) {
+                LARGE_INTEGER freq, t0, t1;
+                QueryPerformanceFrequency(&freq);
+                QueryPerformanceCounter(&t0);
 
-                    QueryPerformanceCounter(&t1);
-                    double elapsedMs = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)freq.QuadPart;
-                    if (elapsedMs > 10.0) {
-                        DREAM_LOG_WARN("[HookLatency] Subscriber '%s' took %.2f ms at %p (spike threshold: 10ms)",
-                                       sub.name.empty() ? "unnamed" : sub.name.c_str(), elapsedMs, node->target);
-                    }
+                DreamCrashGuard::ExecuteSafely(sub.name.empty() ? "ChainedSubscriber" : sub.name.c_str(), [&]() {
+                    sub.callback(ctx);
+                });
+
+                QueryPerformanceCounter(&t1);
+                double elapsedMs = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)freq.QuadPart;
+                if (elapsedMs > 10.0) {
+                    DREAM_LOG_WARN("[HookLatency] Subscriber '%s' took %.2f ms at %p (spike threshold: 10ms)",
+                                   sub.name.empty() ? "unnamed" : sub.name.c_str(), elapsedMs, node->target);
                 }
             }
         }

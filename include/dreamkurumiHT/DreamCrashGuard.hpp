@@ -10,8 +10,37 @@
 #include <unordered_map>
 #include "DreamLog.hpp"
 
-extern "C" inline __attribute__((noinline)) void DreamLongjmpThunk(jmp_buf* jb, int val) {
-    longjmp(*jb, val);
+extern "C" __attribute__((naked)) void DreamLongjmpThunk(jmp_buf* jb, int val) {
+    asm volatile(
+        ".intel_syntax noprefix\n"
+        "mov rbx, [rcx + 8]\n"
+        "mov rsp, [rcx + 16]\n"
+        "mov rbp, [rcx + 24]\n"
+        "mov rsi, [rcx + 32]\n"
+        "mov rdi, [rcx + 40]\n"
+        "mov r12, [rcx + 48]\n"
+        "mov r13, [rcx + 56]\n"
+        "mov r14, [rcx + 64]\n"
+        "mov r15, [rcx + 72]\n"
+        "mov r10, [rcx + 80]\n" // Rip
+        "movdqu xmm6,  [rcx + 96]\n"
+        "movdqu xmm7,  [rcx + 112]\n"
+        "movdqu xmm8,  [rcx + 128]\n"
+        "movdqu xmm9,  [rcx + 144]\n"
+        "movdqu xmm10, [rcx + 160]\n"
+        "movdqu xmm11, [rcx + 176]\n"
+        "movdqu xmm12, [rcx + 192]\n"
+        "movdqu xmm13, [rcx + 208]\n"
+        "movdqu xmm14, [rcx + 224]\n"
+        "movdqu xmm15, [rcx + 240]\n"
+        "mov eax, edx\n"
+        "test eax, eax\n"
+        "jnz 1f\n"
+        "mov eax, 1\n"
+        "1:\n"
+        "jmp r10\n"
+        ".att_syntax prefix\n"
+    );
 }
 
 namespace dreamkurumi {
@@ -67,24 +96,29 @@ public:
         }
     }
 
-    // Check if mod circuit breaker is tripped (too many consecutive crashes)
-    static bool IsCircuitTripped(const char* modName) {
+    static size_t HashModName(const char* s) noexcept {
+        uint64_t h = 14695981039346656037ULL;
+        while (s && *s) { h ^= static_cast<uint8_t>(*s++); h *= 1099511628211ULL; }
+        return static_cast<size_t>(h & 63);
+    }
+
+    // Check if mod circuit breaker is tripped (too many consecutive crashes) - Zero Lock, Zero Alloc
+    static bool IsCircuitTripped(const char* modName) noexcept {
         if (!modName) return false;
-        std::lock_guard<std::mutex> lock(Instance().m_circuitMutex);
-        auto it = Instance().m_faultCounts.find(modName);
-        return (it != Instance().m_faultCounts.end() && it->second >= 5);
+        return Instance().m_faultCounts[HashModName(modName)].load(std::memory_order_relaxed) >= 5;
     }
 
-    static void RecordSuccess(const char* modName) {
+    static void RecordSuccess(const char* modName) noexcept {
         if (!modName) return;
-        std::lock_guard<std::mutex> lock(Instance().m_circuitMutex);
-        Instance().m_faultCounts[modName] = 0;
+        auto& slot = Instance().m_faultCounts[HashModName(modName)];
+        if (slot.load(std::memory_order_relaxed) != 0) {
+            slot.store(0, std::memory_order_relaxed);
+        }
     }
 
-    static void RecordFault(const char* modName) {
+    static void RecordFault(const char* modName) noexcept {
         if (!modName) return;
-        std::lock_guard<std::mutex> lock(Instance().m_circuitMutex);
-        size_t cnt = ++Instance().m_faultCounts[modName];
+        size_t cnt = ++Instance().m_faultCounts[HashModName(modName)];
         if (cnt == 5) {
             DREAM_LOG_ERROR("DreamCrashGuard: CIRCUIT BREAKER TRIPPED for mod '%s' (5 consecutive crashes). Mod callback disabled.", modName);
         }
@@ -205,13 +239,21 @@ private:
             ctx->faultRip = pExceptionInfo->ContextRecord->Rip;
             ctx->faultCode = code;
 
+            // Handle stack overflow by resetting stack guard page
+            if (code == 0xC00000FD) { // EXCEPTION_STACK_OVERFLOW
+                _resetstkoflw();
+            }
+
             // DO NOT log inside VEH! Logging can deadlock if logger or heap lock was held.
-            // Safely redirect context to DreamLongjmpThunk and return EXCEPTION_CONTINUE_EXECUTION.
-            // NtContinue will pop OS exception frames and execute thunk on a clean 16-byte aligned stack.
-            // Under MinGW GCC x64 on Windows, longjmp from VEH cleanly unwinds
-            // directly back to the setjmp landing pad without synthetic stack frame errors.
-            // Logging is deferred to Execute() on the restored stack to prevent deadlocks.
-            longjmp(ctx->jmpBuf, 1);
+            // Safely redirect context to DreamLongjmpThunk via OS NtContinue dispatcher.
+            // NtContinue will unwind OS exception dispatch frames cleanly and execute thunk
+            // on an aligned stack frame, preventing OS dispatcher frame abandonment.
+            auto* c = pExceptionInfo->ContextRecord;
+            c->Rip = (DWORD64)&DreamLongjmpThunk;
+            c->Rcx = (DWORD64)&ctx->jmpBuf;
+            c->Rdx = 1;
+            c->Rsp = ((c->Rsp - 0x100) & ~0xFULL) - 8;
+            return EXCEPTION_CONTINUE_EXECUTION;
         }
 
         return EXCEPTION_CONTINUE_SEARCH;
@@ -219,8 +261,7 @@ private:
 
     PVOID m_vehHandle{nullptr};
     std::mutex m_mutex;
-    std::mutex m_circuitMutex;
-    std::unordered_map<std::string, size_t> m_faultCounts;
+    std::atomic<size_t> m_faultCounts[64]{};
     std::atomic<size_t> m_totalCrashesPrevented{0};
 };
 

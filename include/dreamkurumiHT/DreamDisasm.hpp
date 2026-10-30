@@ -12,6 +12,7 @@ struct DecodedInstruction {
     uint8_t length{0};
     uint8_t opcode{0};
     uint8_t opcode2{0};
+    uint8_t modrmReg{0};
     bool isRipRelative{false};
     uint8_t dispOffset{0};
     uint8_t dispSize{0};
@@ -58,11 +59,14 @@ public:
         }
 
         // Check for RIP-relative addressing (ModR/M with mod = 00 and r/m = 101 [disp32])
-        if ((hs.flags & F_MODRM) && (hs.modrm_mod == 0) && (hs.modrm_rm == 5)) {
-            result.isRipRelative = true;
-            result.dispSize = 4;
-            result.dispOffset = result.length - result.immSize - 4;
-            result.dispVal = static_cast<int32_t>(hs.disp.disp32);
+        if (hs.flags & F_MODRM) {
+            result.modrmReg = hs.modrm_reg;
+            if ((hs.modrm_mod == 0) && (hs.modrm_rm == 5)) {
+                result.isRipRelative = true;
+                result.dispSize = 4;
+                result.dispOffset = result.length - result.immSize - 4;
+                result.dispVal = static_cast<int32_t>(hs.disp.disp32);
+            }
         }
 
         if (hs.flags & F_RELATIVE) {
@@ -70,6 +74,29 @@ public:
         }
 
         return result;
+    }
+
+    // Check if instruction is unsupported LOOP/JRCXZ (0xE0..0xE3)
+    static bool IsLoopOrJrcxz(uint8_t opcode) {
+        return (opcode >= 0xE0 && opcode <= 0xE3);
+    }
+
+    // Check if instruction is a terminal jump/return/interrupt
+    static bool IsTerminalInstruction(uint8_t opcode, uint8_t opcode2 = 0, uint8_t modrmReg = 0) {
+        if (opcode == 0xC3 || opcode == 0xC2 || opcode == 0xCB || opcode == 0xCA) return true; // RET
+        if (opcode == 0xCC || opcode == 0xCD || opcode == 0xCE || opcode == 0xCF) return true; // INT / IRET
+        if (opcode == 0xE9 || opcode == 0xEB) return true; // Unconditional JMP
+        if (opcode == 0xFF && (modrmReg == 4 || modrmReg == 5)) return true; // Indirect JMP (FF /4 or FF /5)
+        if (opcode == 0x0F && opcode2 == 0x0B) return true; // UD2
+        if (opcode == 0x0F && (opcode2 == 0x05 || opcode2 == 0x34)) return true; // SYSCALL / SYSENTER
+        return false;
+    }
+
+    // Check if instruction is a conditional branch (Jcc)
+    static bool IsConditionalJump(uint8_t opcode, uint8_t opcode2 = 0) {
+        if (opcode >= 0x70 && opcode <= 0x7F) return true; // Short Jcc (rel8)
+        if (opcode == 0x0F && (opcode2 >= 0x80 && opcode2 <= 0x8F)) return true; // Near Jcc (rel32)
+        return false;
     }
 
 // ========================================================================

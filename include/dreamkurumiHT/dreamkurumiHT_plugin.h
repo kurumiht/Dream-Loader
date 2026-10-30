@@ -15,7 +15,7 @@
 namespace dreamkurumi {
 
 // ============================================================================
-// Extended SIMD / AVX2 CPU Register Context for Plugins (v3.8.3)
+// Extended SIMD / AVX2 CPU Register Context for Plugins (v3.8.4)
 // ============================================================================
 #pragma pack(push, 1)
 struct DreamYmmRegister {

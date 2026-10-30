@@ -30,6 +30,11 @@ tests/test_rtti_candidates.json
 tests/test_rtti_classes.tsv
 tests/test_trace.jsonl
 tests/test_mods_store/
+tests/test_mods_store_harden/
+tests/test_patch_migration_report.json
+*.zip-
+dreamkurumiHT.dll
+mods/Dream-Auto-Pickup/
 
 # Whitelist mod configurations
 !mods/**/config.ini

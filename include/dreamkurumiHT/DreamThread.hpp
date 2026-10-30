@@ -57,8 +57,8 @@ inline const char* GetWineVersion() {
 }
 
 struct DreamIpMap {
-    uint8_t orig;
-    uint8_t tramp;
+    uint16_t orig;
+    uint16_t tramp;
 };
 
 // ============================================================================
@@ -91,23 +91,38 @@ public:
     size_t GetSuspendedCount() const { return m_suspendedCount; }
     size_t GetRelocatedCount() const { return m_relocatedThreads; }
 
-private:
-    bool TranslateIp(uintptr_t rip, uintptr_t& out) const {
-        if (!m_patchStart || m_patchSize == 0 || !m_trampolineStart) return false;
-        if (rip < m_patchStart || rip >= (m_patchStart + m_patchSize)) return false;
+    static bool TranslateIp(uintptr_t rip, uintptr_t patchStart, size_t patchSize,
+                            uintptr_t trampolineStart, const DreamIpMap* ipMap, size_t ipMapCount,
+                            uintptr_t& out) {
+        if (!patchStart || patchSize == 0 || !trampolineStart) return false;
+        if (rip < patchStart || rip >= (patchStart + patchSize)) return false;
 
-        uintptr_t off = rip - m_patchStart;
-        if (m_ipMap && m_ipMapCount > 0) {
-            for (size_t i = 0; i < m_ipMapCount; ++i) {
-                if (m_ipMap[i].orig == off) {
-                    out = m_trampolineStart + m_ipMap[i].tramp;
+        uintptr_t off = rip - patchStart;
+        if (ipMap && ipMapCount > 0) {
+            // 1. Exact match on displaced instruction boundary
+            for (size_t i = 0; i < ipMapCount; ++i) {
+                if (ipMap[i].orig == off) {
+                    out = trampolineStart + ipMap[i].tramp;
+                    return true;
+                }
+            }
+            // 2. Intra-instruction match (thread stopped midway within multi-byte instruction):
+            for (size_t i = ipMapCount; i > 0; --i) {
+                if (off >= ipMap[i - 1].orig) {
+                    uintptr_t intra = off - ipMap[i - 1].orig;
+                    out = trampolineStart + ipMap[i - 1].tramp + intra;
                     return true;
                 }
             }
         }
         // Fallback linear mapping
-        out = m_trampolineStart + off;
+        out = trampolineStart + off;
         return true;
+    }
+
+private:
+    bool TranslateIp(uintptr_t rip, uintptr_t& out) const {
+        return TranslateIp(rip, m_patchStart, m_patchSize, m_trampolineStart, m_ipMap, m_ipMapCount, out);
     }
 
     void FreezeAll() {
@@ -131,20 +146,23 @@ private:
                 if (GetThreadId(hThread) != currentThreadId) {
                     if (m_suspendedCount < 128) {
                         if (SuspendThread(hThread) != static_cast<DWORD>(-1)) {
-                            m_suspendedThreads[m_suspendedCount++] = hThread;
+                            HANDLE hSaved = nullptr;
+                            if (DuplicateHandle(GetCurrentProcess(), hThread, GetCurrentProcess(), &hSaved, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+                                m_suspendedThreads[m_suspendedCount++] = hSaved;
 
-                            CONTEXT ctx{};
-                            ctx.ContextFlags = CONTEXT_CONTROL;
-                            if (GetThreadContext(hThread, &ctx)) {
-                                uintptr_t newRip = 0;
-                                if (TranslateIp(ctx.Rip, newRip)) {
-                                    ctx.Rip = newRip;
-                                    SetThreadContext(hThread, &ctx);
-                                    m_relocatedThreads++;
+                                CONTEXT ctx{};
+                                ctx.ContextFlags = CONTEXT_CONTROL;
+                                if (GetThreadContext(hSaved, &ctx)) {
+                                    uintptr_t newRip = 0;
+                                    if (TranslateIp(ctx.Rip, newRip)) {
+                                        ctx.Rip = newRip;
+                                        SetThreadContext(hSaved, &ctx);
+                                        m_relocatedThreads++;
+                                    }
                                 }
+                            } else {
+                                ResumeThread(hThread);
                             }
-                            hThread = nullptr; // Handed off to m_suspendedThreads
-                            continue;
                         }
                     }
                 }

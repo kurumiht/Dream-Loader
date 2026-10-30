@@ -27,6 +27,71 @@
 
 namespace dreamkurumi {
 
+inline std::string EscapeStoreString(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '\t': out += "\\t"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            default:   out += c; break;
+        }
+    }
+    return out;
+}
+
+inline std::string UnescapeStoreString(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            char next = s[++i];
+            switch (next) {
+                case '\\': out += '\\'; break;
+                case 't':  out += '\t'; break;
+                case 'n':  out += '\n'; break;
+                case 'r':  out += '\r'; break;
+                default:   out += '\\'; out += next; break;
+            }
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
+inline std::string HexEncodeBytes(const uint8_t* data, size_t size) {
+    static const char hexChars[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(size * 2);
+    for (size_t i = 0; i < size; ++i) {
+        out += hexChars[(data[i] >> 4) & 0x0F];
+        out += hexChars[data[i] & 0x0F];
+    }
+    return out;
+}
+
+inline std::vector<uint8_t> HexDecodeBytes(const std::string& hex) {
+    std::vector<uint8_t> bytes;
+    if (hex.size() % 2 != 0) return bytes;
+    bytes.reserve(hex.size() / 2);
+    auto hexVal = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        int h = hexVal(hex[i]);
+        int l = hexVal(hex[i + 1]);
+        if (h < 0 || l < 0) return {};
+        bytes.push_back(static_cast<uint8_t>((h << 4) | l));
+    }
+    return bytes;
+}
+
 enum class StoreValueType : uint8_t {
     String = 0,
     Int64 = 1,
@@ -62,7 +127,9 @@ struct StoreValue {
         StoreValue v;
         v.type = StoreValueType::Double;
         v.doubleVal = d;
-        v.stringVal = std::to_string(d);
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%.17g", d);
+        v.stringVal = buf;
         return v;
     }
 
@@ -80,6 +147,7 @@ struct StoreValue {
         if (data && size > 0) {
             const auto* ptr = static_cast<const uint8_t*>(data);
             v.blobVal.assign(ptr, ptr + size);
+            v.stringVal = HexEncodeBytes(ptr, size);
         }
         return v;
     }
@@ -187,8 +255,10 @@ public:
         UpdateSnapshot([](DataMap& m) { m.clear(); });
     }
 
-    bool IsDirty() const { return m_dirty.load(); }
-    void MarkClean() { m_dirty.store(false); }
+    bool IsDirty() const { return m_version.load() != m_flushedVersion.load(); }
+    uint64_t GetCurrentVersion() const { return m_version.load(); }
+    void MarkClean() { m_flushedVersion.store(m_version.load()); }
+    void MarkFlushed(uint64_t ver) { m_flushedVersion.store(ver); }
 
     // Serialization for disk storage
     std::string Serialize() const {
@@ -197,7 +267,13 @@ public:
         std::ostringstream ss;
         ss << "# DreamStore Namespace: " << m_name << "\n";
         for (const auto& [k, v] : *snap) {
-            ss << static_cast<int>(v.type) << "\t" << k << "\t" << v.stringVal << "\n";
+            std::string valStr;
+            if (v.type == StoreValueType::Blob) {
+                valStr = HexEncodeBytes(v.blobVal.data(), v.blobVal.size());
+            } else {
+                valStr = EscapeStoreString(v.stringVal);
+            }
+            ss << static_cast<int>(v.type) << "\t" << EscapeStoreString(k) << "\t" << valStr << "\n";
         }
         return ss.str();
     }
@@ -213,24 +289,35 @@ public:
             size_t tab2 = line.find('\t', tab1 + 1);
             if (tab2 == std::string::npos) continue;
 
-            int typeCode = std::stoi(line.substr(0, tab1));
-            std::string key = line.substr(tab1 + 1, tab2 - tab1 - 1);
-            std::string valStr = line.substr(tab2 + 1);
+            int typeCode = 0;
+            try {
+                typeCode = std::stoi(line.substr(0, tab1));
+            } catch (...) {
+                continue;
+            }
+
+            std::string key = UnescapeStoreString(line.substr(tab1 + 1, tab2 - tab1 - 1));
+            std::string valRaw = line.substr(tab2 + 1);
 
             StoreValue v;
             v.type = static_cast<StoreValueType>(typeCode);
-            v.stringVal = valStr;
-            if (v.type == StoreValueType::Int64) {
-                try { v.intVal = std::stoll(valStr); } catch (...) {}
-            } else if (v.type == StoreValueType::Double) {
-                try { v.doubleVal = std::stod(valStr); } catch (...) {}
-            } else if (v.type == StoreValueType::Bool) {
-                v.boolVal = (valStr == "true" || valStr == "1");
+            if (v.type == StoreValueType::Blob) {
+                v.blobVal = HexDecodeBytes(valRaw);
+                v.stringVal = valRaw;
+            } else {
+                v.stringVal = UnescapeStoreString(valRaw);
+                if (v.type == StoreValueType::Int64) {
+                    try { v.intVal = std::stoll(v.stringVal); } catch (...) {}
+                } else if (v.type == StoreValueType::Double) {
+                    try { v.doubleVal = std::stod(v.stringVal); } catch (...) {}
+                } else if (v.type == StoreValueType::Bool) {
+                    v.boolVal = (v.stringVal == "true" || v.stringVal == "1");
+                }
             }
             (*newMap)[key] = v;
         }
         m_snapshot.store(newMap);
-        m_dirty = false;
+        m_flushedVersion.store(m_version.load());
     }
 
 private:
@@ -241,13 +328,14 @@ private:
         auto newMap = std::make_shared<DataMap>(current ? *current : DataMap());
         fn(*newMap);
         m_snapshot.store(newMap);
-        m_dirty = true;
+        m_version.fetch_add(1);
     }
 
     std::string m_name;
     mutable std::mutex m_writeMutex;
     std::atomic<std::shared_ptr<const DataMap>> m_snapshot;
-    std::atomic<bool> m_dirty{false};
+    std::atomic<uint64_t> m_version{0};
+    std::atomic<uint64_t> m_flushedVersion{0};
 };
 
 // ============================================================================
@@ -327,6 +415,7 @@ public:
         }
 
         // 2. Write to temporary file with write-through
+        uint64_t targetVersion = ns->GetCurrentVersion();
         std::string serialized = ns->Serialize();
         HANDLE hFile = CreateFileA(tempPath.c_str(), GENERIC_WRITE, 0, NULL,
                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, NULL);
@@ -359,7 +448,7 @@ public:
             }
         }
 
-        ns->MarkClean();
+        ns->MarkFlushed(targetVersion);
         DREAM_LOG_DEBUG("DreamStore: Atomically flushed namespace '%s' to '%s'", nsName.c_str(), finalPath.c_str());
         return true;
     }
