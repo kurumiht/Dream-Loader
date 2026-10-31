@@ -10,7 +10,7 @@
   <a href="README.md">🇬🇧 <b>English (Default)</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
   <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Dream-Core-v3.9.0.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.9.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.4 Framework" />
+    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.9.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.9.0 Framework" />
   </a>
   &nbsp;&nbsp;
   <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Dream-AoE-Harvest-v3.9.0.zip">
