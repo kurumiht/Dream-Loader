@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
+#include <cstdarg>
+#include <cstring>
 #include <string>
 #include <vector>
 #include "DreamEnshroudedTypes.hpp"
@@ -261,8 +263,25 @@ public:
         if (m_initialized) return true;
 
         m_hMod = GetModuleHandleA("dreamkurumiHT.dll");
-        if (!m_hMod) m_hMod = LoadLibraryA("dreamkurumiHT.dll");
+        if (!m_hMod) {
+            char exePath[MAX_PATH] = {};
+            if (GetModuleFileNameA(NULL, exePath, MAX_PATH)) {
+                char* pSlash = std::strrchr(exePath, '\\');
+                if (!pSlash) pSlash = std::strrchr(exePath, '/');
+                if (pSlash) {
+                    *(pSlash + 1) = '\0';
+                    char fullDllPath[MAX_PATH] = {};
+                    std::snprintf(fullDllPath, sizeof(fullDllPath), "%smods\\dreamkurumiHT\\dreamkurumiHT.dll", exePath);
+                    m_hMod = LoadLibraryA(fullDllPath);
+                    if (!m_hMod) {
+                        std::snprintf(fullDllPath, sizeof(fullDllPath), "%sdreamkurumiHT.dll", exePath);
+                        m_hMod = LoadLibraryA(fullDllPath);
+                    }
+                }
+            }
+        }
         if (!m_hMod) m_hMod = LoadLibraryA("mods\\dreamkurumiHT\\dreamkurumiHT.dll");
+        if (!m_hMod) m_hMod = LoadLibraryA("dreamkurumiHT.dll");
         if (!m_hMod) m_hMod = LoadLibraryA("..\\dreamkurumiHT\\dreamkurumiHT.dll");
         if (!m_hMod) return false;
 

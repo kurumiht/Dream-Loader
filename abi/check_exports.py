@@ -15,7 +15,9 @@ Usage
   add --update to bless the current state (a reviewed, deliberate ABI event) and --dll build/dreamkurumiHT.dll
 """
 import argparse
+import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -112,7 +114,17 @@ def parse_exports(text, extra_aliases):
 
 
 def dll_exports(path):
-    out = subprocess.run(["objdump", "-p", path], capture_output=True, text=True, check=True).stdout
+    objdump_cmd = "objdump"
+    if shutil.which(objdump_cmd) is None:
+        for candidate in [
+            r"C:\Temp\w64devkit\w64devkit\bin\objdump.exe",
+            r"C:\w64devkit\bin\objdump.exe",
+            r"C:\msys64\ucrt64\bin\objdump.exe"
+        ]:
+            if os.path.exists(candidate):
+                objdump_cmd = candidate
+                break
+    out = subprocess.run([objdump_cmd, "-p", path], capture_output=True, text=True, check=True).stdout
     return set(re.findall(r"\b(DK_\w+)\b", out))
 
 
@@ -123,6 +135,7 @@ def main():
     ap.add_argument("--golden", required=True)
     ap.add_argument("--update", action="store_true")
     ap.add_argument("--dll")
+    ap.add_argument("--strict-dll", action="store_true", help="Fail if DLL exports symbols not in golden file")
     a = ap.parse_args()
     htxt = open(a.header, encoding="utf-8-sig", errors="replace").read()
     etxt = open(a.export_src, encoding="utf-8-sig", errors="replace").read()
@@ -182,10 +195,15 @@ def main():
 
     if a.dll:
         have = dll_exports(a.dll)
+        golden_names = {l.split(": ", 1)[1].split(" | ")[0] for l in old}
         for l in old:
             n = l.split(": ", 1)[1].split(" | ")[0]
             if n not in have:
                 errors.append(f"golden symbol missing from DLL export table: {n}")
+        if a.strict_dll:
+            for h in sorted(have):
+                if h not in golden_names:
+                    errors.append(f"DLL exports extra symbol not in golden file: {h}")
 
     for w in warns:
         print("warn:", w)

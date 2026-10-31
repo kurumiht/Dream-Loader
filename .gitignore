@@ -1,46 +1,121 @@
-# Dumps, Logs & Crash Reports
-/dump/
-*.bin
-*.dmp
-*.log
-*.log.*
-*.jsonl
-*.zip*
-*.ini
-scratch_*
-*.tsv
-dream_crash_report_*
-dream_hang_report_*
-tests/*.txt
-tests/test_trace.jsonl
-tests/test_mods_store/
-tests/test_mods_store_harden/
-tests/test_patch_migration_report.json
-tests/test_rtti_candidates.json
+# =====================================================================================
+# dreamkurumiHT .gitignore (production)
+#
+# REMINDER: .gitignore only affects files that are NOT yet tracked. Anything already
+# committed stays in history. Check with:
+#   git log --all --stat -- dump '*.bin' '*.dll' '*.dmp'
+# and untrack with `git rm --cached <path>`. Binaries are shipped through GitHub Releases,
+# never through the source tree. scripts/pre-commit enforces this (see scripts/).
+# =====================================================================================
 
-# Build Artifacts & Intermediate Files
+# --- Build output -------------------------------------------------------------------
+/build/
+/out/
+/bin/
+/obj/
+**/bin/
+**/obj/
+/cmake-build-*/
+/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.obj
+*.a
+*.lib
+*.exp
+*.ilk
+*.idb
+*.pdb
+*.map
+*.res
+*.rc.o
+*.d
+
+# --- Binaries: distribute via GitHub Releases ------------------------------------------
 *.dll
 *.exe
-*.pdb
-*.obj
-*.o
-*.lib
-*.a
-bin/
-obj/
-build/
-x64/
-Debug/
-Release/
+*.sys
+*.so
+*.dylib
+*.node
 
-# Temporary & Editor files
+# --- Reverse-engineering artefacts (may contain game code/data: NEVER commit) -----------
+/dump/
+/dumps/
+/scratch/
+scratch_*
+*.bin
+*.dmp
+*.mdmp
+*.hex
+*.raw
+*.orig
+*.rej
+# DreamTrace / DreamRttiScan / DreamPatchMatcher outputs
+trace*.jsonl
+*.jsonl
+rtti_*.json
+rtti_*.tsv
+*.tsv
+patch_migration_report.json
+
+# --- Game content: never redistribute ------------------------------------------------
+*.kfc
+*.kfc4
+*.pak
+*.dds
+*.ktx
+*.ktx2
+
+# --- Runtime data written by the framework or by mods ---------------------------------
+*.log
+*.log.*
+/logs/
+tests/*.txt
+tests/*.ini
+tests/*.json
+template/dreamkurumi_cache.ini
+/mods_data/
+**/mods_data/
+*.dstore
+*.dstore.tmp
 *.tmp
+.shadow/
+**/.shadow/
+shadow_*
+dreamkurumi_layer*.json
+# per-user config: keep only *.example.toml under version control
+config.toml
+config.ini
+!*.example.toml
+!*.example.ini
+
+# --- Secrets and code-signing material ------------------------------------------------
+*.pfx
+*.p12
+*.pem
+*.key
+*.snk
+*.cer
+*.crt
+.env
+.env.*
+secrets/
+
+# --- Backups, editors, OS --------------------------------------------------------------
 *.bak
+*~
+*.swp
+*.swo
 .vs/
 .vscode/
-.githooks/
-mods_data/
-*.dstore
-
-# Whitelist documentation & golden baselines
-!abi/exports_v1.golden.txt
+.idea/
+*.user
+*.suo
+*.sln.docstates
+CMakeUserPresets.json
+Thumbs.db
+desktop.ini
+.DS_Store
