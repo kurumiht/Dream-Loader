@@ -13,8 +13,8 @@
     <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.9.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.9.0 Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Dream-AoE-Harvest-v3.9.0.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20v3.9.0%20(Mod)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Dream-AoE-Harvest-v1.4.0.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20v1.4.0%20(Mod)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
   </a>
   &nbsp;&nbsp;
   <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Enshrouded-v1.0.0.3-Build-1273043-SDK-Dump.zip">
