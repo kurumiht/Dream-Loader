@@ -24,7 +24,7 @@
 
 ---
 
-## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (74 Master Capabilities)
+## ฟีเจอร์ทั้งหมดใน dreamkurumiHT (90 Master Capabilities)
 
 > [!NOTE]
 > ### 💬 ข้อความจากผู้พัฒนา / จุดประสงค์ของโปรเจกต์นี้
@@ -270,10 +270,52 @@
     - ตรวจสอบสภาพแวดล้อม Linux Dedicated Server ผ่านฟังก์ชัน `wine_get_version` ใน `ntdll.dll` พร้อมระบบเธรดสำรองที่ปลอดภัย ไม่ค้างเมื่อรันบน Docker / Pterodactyl Container
 69. **Keen Games KFC4 Container Binary Header Validation (`DreamAssetBridge.hpp`)**
     - ตรวจสอบโครงสร้างเฮดเดอร์ของแพ็กเกจไฟล์ Keen Games 1.0 (`0x3443464B` หรือ `"KFC4"`) ขนาด 16 ไบต์ และสกัดเวอร์ชันข้อมูลของคอนเทนเนอร์ได้อย่างแม่นยำ
+70. **MidHook RIP Displacement & IpMap Relocation (`DreamHook`, `DreamThread`)**
+    - ระบบคำนวณและชดเชยค่าพิกัด RIP ภายในคำสั่ง Relocation ผ่านโครงสร้าง `DreamIpMap` แบบ 16-bit ปลอดภัยสูงสุดตอนวาง Hook ข้ามเธรด
+71. **RtlVirtualUnwind Stack Walk & MinimalUnwindInfo (`DreamUnwind`)**
+    - โครงสร้าง Reverse Prologue Unwind ขนาด 44 ไบต์ (`MinimalUnwindInfo`) ได้รับการรับรองและตรวจสอบผ่าน Windows SEH `RtlVirtualUnwind`
+72. **VEH CPU Register Context & Hardware Alignment (`DreamVeh`)**
+    - บันทึกและคืนค่ารีจิสเตอร์ XMM แบบ 16-byte Stride ครบทั้ง 16 ตัว พร้อมระบบตรวจสอบ Alignment และจำกัดความกว้าง Execute Breakpoint เป็น 1 ไบต์
+73. **DreamStore Hex Blobs, Precision Doubles & Version Counters (`DreamStore`)**
+    - จัดเก็บข้อมูล Binary Blob แบบ Hex-Encoded, รักษาความละเอียดทศนิยม 17 หลัก (`%.17g`), Escape อักขระพิเศษ และบันทึกดิสก์ด้วย Version Counter
+74. **RPC Anti-Spoofing & Sliding-Window Rate Limiting (`DreamRpcMultiplexer`)**
+    - ยืนยัน Sender ID จากระดับ Transport ป้องกันการปลอมแปลง Sender ID, ปฏิเสธ Remote Call ที่ไม่ได้รับอนุญาต (Default DENY) และจำกัดอัตราเรียก 120 ครั้ง/วินาที
+75. **Dedicated Server Background Scheduler Ticker (`DreamScheduler`)**
+    - ตัวขับเคลื่อนงานและ Coroutine แบบ Autonomous บน Headless Dedicated Server โดยไม่ต้องพึ่งพา Frame Loop ของการเรนเดอร์ภาพ
+76. **Full Subsystem Live Configuration Sync (`DreamLiveConfig`)**
+    - ซิงก์การตั้งค่าระบบย่อยทั้งหมดแบบเรียลไทม์ (CrashGuard, Watchdog, Log, Memory Sandbox) โดยไม่ต้องรีสตาร์ตเอนจินหรือโปรเซส
+77. **Key-Value Storage & CrashGuard C-API Parity (`DreamStore`, `DreamCrashGuard`)**
+    - ฟังก์ชันส่งออก C-ABI สำหรับตรวจสอบสถิติ Crash, ควบคุมและรีเซ็ต Circuit Breaker, และอ่านเขียน Key-Value ร่วมกับปลั๊กอินภายนอก
+78. **Kernel-Safe Memory Probe & Canonical Range Guard (`DreamMemory`)**
+    - ระบบ Sandbox ตรวจสอบช่วงหน่วยความจำ Canonical Virtual Address และ Guard Page ป้องกันแครชจากการอ่านเขียนพอยน์เตอร์ที่ไม่ถูกต้อง
+79. **Plugin Execution Gate & Zero-Freeze Draining (`DreamPluginGate`)**
+    - ประตูควบคุมการทำงานของปลั๊กอินแบบ Lock-Free Atomic ร่วมกับ `FlushProcessWriteBuffers()` ถ่ายเทเธรดออกอย่างปลอดภัยก่อน Unload
+80. **GNS Out-of-Band Transport RPC Demux (`DreamGnsTransportHook`)**
+    - ดักจับและแยกซองข้อมูล Network RPC ที่ระดับ SteamNetworkingSockets / Keen Net Transport โดยไม่รบกวนทราฟฟิกหลักของตัวเกม
+81. **Deterministic Gate-Action-Observe Event Pipeline (`DreamEventContext`)**
+    - ไปป์ไลน์อีเวนต์แบบหลายระดับ (Gate -> Action -> Observe) พร้อมระบบล็อกการ Claim และ Synthetic Guard ป้องกันการวนลูปไม่รู้จบ
+82. **Raw Log Legacy Strip, Buffer Replay & Reentry Guard (`DreamRawLog`)**
+    - กรอง Timestamp และรหัสสี ANSI ที่ซ้ำซ้อนจากม็อดรุ่นเก่า, เก็บสะสม Boot Log ช่วงเริ่มต้น, และป้องกันการวนซ้ำในระบบบันทึกข้อความ
+83. **Engine Interaction Loop Recovery & Silent Telemetry (`DreamLoopRecovery`, `DreamServerTelemetry`)**
+    - กู้คืนสถานะ Stack และข้ามลูปเก็บของที่พังโดยอัตโนมัติ (Server `0xA1394` -> `0xA1C1E`, Client `0x2A3034` -> `0x2A38BE`) พร้อม SPSC Ring Buffer สำหรับแจ้งเตือนแบบ Silent
+84. **Frame-Perfect Window Procedure Subclassing (`DreamWindowSync`)**
+    - ดักจับ `WM_WINDOWPOSCHANGED` และ `WM_ACTIVATEAPP` ผ่าน Subclassing หน้าต่างเกม จัดตำแหน่ง HUD ผ่าน `ClientToScreen` และป้องกัน Alt-Tab Pop-in
+85. **Deterministic GNS Connection State Machine (`DreamNetStateTracker`)**
+    - เครื่องบอกสถานะการเชื่อมต่อ GNS (Disconnected, Connecting, Connected) พร้อมคำนวณ Ping และ Packet Loss แบบเรียลไทม์
+86. **Engine CFG Delta Auto-Discovery (`DreamAutoLoopResolver`)**
+    - ค้นหาและถอดรหัสระยะกระโดดของลูป (+0x88A Parity) แบบไดนามิก หมดปัญหา Offset เคลื่อนเมื่อเกมอัปเดตแพตช์
+87. **Harvest Micro-Batch Throttling & Deduplication (`DreamBatchThrottler`)**
+    - ควบคุมการเก็บเกี่ยวไม่เกิน 14 ชิ้นต่อ Tick พร้อมฟิลเตอร์ตรวจสอบระยะทางและตัดข้อมูลซ้ำซ้อนแบบ Hash ลื่นไหลไม่กระตุก
+88. **Vulkan Swapchain Mutable Formats & UNORM Aliasing (`DreamVulkanTracker`)**
+    - ฉีด Flag `VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR` และแปลง Format sRGB เป็น UNORM ป้องกันปัญหาสี Overlay ซีดขาวบนจอ HDR/sRGB
+89. **Keen ECS Entity Lifecycle & Generational ABA Guard (`DreamEcsValidator`)**
+    - ตรวจสอบไบต์สถานะ `[rcx + 0x2D]` (`0x01` Active, `0x02` PendingKill, `0x04` Unloading) และ Generational Handle ป้องกันการเรียกใช้ Object ที่กำลังถูกทำลาย
+90. **16-Player Dedicated Server Dynamic Backpressure (`DreamDynamicBackpressure`)**
+    - ตัวตรวจวัดรอบเวลาเซิร์ฟเวอร์ด้วยฮาร์ดแวร์ QPC ปรับโควตาเก็บเกี่ยว 2–24 ชิ้น/Tick อัตโนมัติ พร้อมคิว Fair-share Round-Robin รองรับผู้เล่น 16 คนพร้อมกัน
 
 ---
 
-## ผลการทดสอบ (Verification Suite 74/74 ผ่านหมด 100%)
+## ผลการทดสอบ (Verification Suite 90/90 ผ่านหมด 100%)
 
 ```text
 [TEST 1] Testing DreamCache...                         -> [PASS]
@@ -345,9 +387,30 @@
 [TEST 67] Multi-Loader Coexistence Shield & Forwarding  -> [PASS] (ตรวจจับ E9/FF 25/EB จาก EML/ShroudForge/Overlays พร้อมส่งต่อผ่าน 14-byte Trampoline!)
 [TEST 68] Linux Proton / Wine Headless Server Detection -> [PASS] (ตรวจสอบ ntdll!wine_get_version และ Fallback ปลอดภัยสำหรับ Thread Freeze บน Linux!)
 [TEST 69] Keen Games KFC4 Container Binary Validation   -> [PASS] (ตรวจสอบ Magic 0x3443464B 'KFC4' และสกัดเวอร์ชันคอนเทนเนอร์ 16 ไบต์สมบูรณ์!)
+[TEST 70] MidHook RIP Displacement & IpMap Relocation -> [PASS] (Intra-instruction displacement mapping & widened 16-bit IpMap!)
+[TEST 71] RtlVirtualUnwind Stack Walk & MinimalUnwindInfo-> [PASS] (Verified 44-byte reverse prologue unwind info with Windows SEH!)
+[TEST 72] VEH CPU Register Context & Hardware Alignment  -> [PASS] (16-byte XMM stride preservation & strict hardware breakpoint alignment!)
+[TEST 73] DreamStore Hex Blobs, Strings & Dirty Versions -> [PASS] (Hex-encoded binary blobs, double %.17g precision & versioned flushes!)
+[TEST 74] DreamRpcMultiplexer Anti-Spoofing & Rate Limit -> [PASS] (Strict caller validation, default DENY, 120/s rate limit & duplicate check!)
+[TEST 75] Dedicated Server Scheduler Background Ticker     -> [PASS] (Headless timer driving delayed tasks without render loop!)
+[TEST 76] Full Subsystem Live Configuration Sync          -> [PASS] (Dynamic threshold sync across CrashGuard, Watchdog & Logs!)
+[TEST 77] DreamStore KV Storage & CrashGuard C-API Parity  -> [PASS] (Atomic flushes, fault query, circuit breaker reset & exports!)
+[TEST 78] Kernel-Safe Memory Probe & Canonical Range Guard -> [PASS] (Canonical range check, guard page filter & crash-free probing!)
+[TEST 79] Plugin Execution Gate & Zero-Freeze Draining     -> [PASS] (Lock-free TryEnter/Leave & FlushProcessWriteBuffers drain!)
+[TEST 80] GNS Out-of-Band Transport RPC Demux              -> [PASS] (Filtered out-of-band frames & compacted keen::net streams!)
+[TEST 81] Deterministic Gate-Action-Observe Event Pipeline  -> [PASS] (Claim exclusivity, Gate cancellation & synthetic loop guard!)
+[TEST 82] Raw Log Legacy Strip & Reentry Guard             -> [PASS] (Stripped duplicate timestamps/ANSI & broke recursive host logs!)
+[TEST 83] Engine Loop Recovery & Silent Telemetry Ring     -> [PASS] (Recovered server 0xA1394 & client 0x2A3034 batch loop crashes!)
+[TEST 84] Frame-Perfect Window Procedure Subclassing       -> [PASS] (ClientToScreen sync, async placement & Alt-Tab pop-in guard!)
+[TEST 85] Deterministic GNS Connection State Machine       -> [PASS] (Tracked GNS connection states, ping & auto-disconnect reset!)
+[TEST 86] Engine CFG Delta Auto-Discovery (+0x88A Parity)  -> [PASS] (Dynamic loop exit jump calculation & displacement resolution!)
+[TEST 87] Harvest Micro-Batch Throttling & Deduplication   -> [PASS] (14-item/tick quota, spatial radius filter & hash deduplication!)
+[TEST 88] Vulkan Swapchain Mutable Formats & UNORM Alias   -> [PASS] (Injected mutable flag, aliased sRGB to UNORM & zero-gamma wash!)
+[TEST 89] Keen ECS Lifecycle & Generational ABA Guard      -> [PASS] (Lifecycle byte 0x2D PendingKill rejection & generational guard!)
+[TEST 90] 16-Player Dedicated Server Dynamic Backpressure  -> [PASS] (Hardware QPC tick EMA smoothing & fair-share Round-Robin queue!)
 ```
 
-**ผลการทดสอบผ่านทั้งหมด 74/74 รายการ! dreamkurumiHT ได้รับการตรวจสอบความสมบูรณ์ 100%!**
+**ผลการทดสอบผ่านทั้งหมด 90/90 รายการ! dreamkurumiHT ได้รับการตรวจสอบความสมบูรณ์ 100%!**
 
 ---
 

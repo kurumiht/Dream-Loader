@@ -45,7 +45,7 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 
 ---
 
-## 74 Master Capabilities & Architecture
+## 90 Master Capabilities & Architecture
 
 1. **Declarative Harmony API (`Prefix` / `Postfix`)**
    - Clean and expressive function hooking without writing raw opcodes or calculating `E9 JMP` offsets manually.
@@ -265,10 +265,52 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
     - Dynamically detects Linux/Wine runtime environments via `ntdll!wine_get_version` and provides safe fallback for thread freeze operations in Docker/Pterodactyl dedicated servers.
 69. **Keen Games KFC4 Container Binary Header Validation (`DreamAssetBridge.hpp`)**
     - 16-byte packed container header validation (`0x3443464B` magic / `"KFC4"`) and version extraction for Enshrouded 1.0 raw asset packages.
+70. **MidHook RIP Displacement & IpMap Relocation (`DreamHook`, `DreamThread`)**
+    - High-precision instruction boundary and intra-instruction relative offset displacement mapping via 16-bit `DreamIpMap`, safely migrating thread RIPs during near-memory MidHook patching.
+71. **RtlVirtualUnwind Stack Walk & MinimalUnwindInfo (`DreamUnwind`)**
+    - 44-byte reverse prologue unwind info (`MinimalUnwindInfo`) verified with Windows SEH `RtlVirtualUnwind` to ensure seamless stack walks through near-memory trampolines.
+72. **VEH CPU Register Context & Hardware Alignment (`DreamVeh`)**
+    - 16-byte XMM stride preservation (`CopyFromWindowsContext` / `CopyToWindowsContext`) and strict hardware breakpoint alignment checks with execute breakpoint 1-byte clamping.
+73. **DreamStore Hex Blobs, Precision Doubles & Version Counters (`DreamStore`)**
+    - Hex-encoded binary blob storage, 17-digit `%.17g` double precision formatting, string escaping (`\t`, `\n`, `\r`, `\\`), and version-tracked atomic disk flushes.
+74. **RPC Anti-Spoofing & Sliding-Window Rate Limiting (`DreamRpcMultiplexer`)**
+    - Enforced transport sender verification (`trustedSenderId`), strict default DENY for remote callers, 120 calls/sec sliding-window token bucket rate limiting, and duplicate RPC rejection.
+75. **Dedicated Server Background Scheduler Ticker (`DreamScheduler`)**
+    - Autonomous background ticker for headless dedicated servers driving scheduled delayed tasks and periodic callbacks without requiring game rendering frames.
+76. **Full Subsystem Live Configuration Sync (`DreamLiveConfig`)**
+    - Live synchronization across logging, circuit breakers, watchdog thresholds, and memory sandbox limits without restarting process or engine threads.
+77. **Key-Value Storage & CrashGuard C-API Parity (`DreamStore`, `DreamCrashGuard`)**
+    - Comprehensive C-ABI exports for querying fault counts, testing and resetting circuit breakers, and atomic key-value operations across external plugins.
+78. **Kernel-Safe Memory Probe & Canonical Range Guard (`DreamMemory`)**
+    - Memory sandbox with canonical virtual address range checks, guard page detection, and safe non-faulting memory reads and writes.
+79. **Plugin Execution Gate & Zero-Freeze Draining (`DreamPluginGate`)**
+    - Lock-free atomic in-flight execution tracking (`TryEnter` / `Leave`) with `FlushProcessWriteBuffers()` zero-freeze thread draining, allowing safe hot-unloading of native plugins.
+80. **GNS Out-of-Band Transport RPC Demux (`DreamGnsTransportHook`)**
+    - Intercepts and demultiplexes custom network RPC packets directly at the `SteamNetworkingSockets` / Keen Net transport boundary, compacting game packet arrays and preventing foreign packet rejection.
+81. **Deterministic Gate-Action-Observe Event Pipeline (`DreamEventContext`)**
+    - Multi-stage event context pipeline: Gate cancellation, Action claim exclusivity, and synthetic execution guards preventing infinite event feedback loops across mods.
+82. **Raw Log Legacy Strip, Buffer Replay & Reentry Guard (`DreamRawLog`)**
+    - Cleans stacked timestamps and ANSI terminal colors from legacy mod outputs, buffers early engine bootstrap logs, and prevents host-core logging recursions.
+83. **Engine Interaction Loop Recovery & Silent Telemetry (`DreamLoopRecovery`, `DreamServerTelemetry`)**
+    - Automated stack restoration and loop resumption bypassing corrupted entity iterations (`0xA1394` -> `0xA1C1E` Server, `0x2A3034` -> `0x2A38BE` Client) paired with an SPSC lock-free telemetry ring buffer.
+84. **Frame-Perfect Window Procedure Subclassing (`DreamWindowSync`)**
+    - Hooks game main window `WndProc` capturing `WM_WINDOWPOSCHANGED` and `WM_ACTIVATEAPP`, aligning HUD overlays via `ClientToScreen` and `SWP_ASYNCWINDOWPOS` with Alt-Tab pop-in prevention.
+85. **Deterministic GNS Connection State Machine (`DreamNetStateTracker`)**
+    - Tracks Game Network Suite connection states (`Disconnected`, `Connecting`, `Connected`), calculating live round-trip ping and packet loss with auto-reset on disconnect.
+86. **Engine CFG Delta Auto-Discovery (`DreamAutoLoopResolver`)**
+    - Dynamically computes loop jump offsets and disassembles Control Flow Graph displacements (`+0x88A` delta parity), eliminating hardcoded RVAs across game patches.
+87. **Harvest Micro-Batch Throttling & Deduplication (`DreamBatchThrottler`)**
+    - Limits single-tick collection bursts to 14 items with spatial distance filtering and immediate hash deduplication to eliminate stutter.
+88. **Vulkan Swapchain Mutable Formats & UNORM Aliasing (`DreamVulkanTracker`)**
+    - Injects `VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR` into swapchain creation and aliases sRGB formats to UNORM, fixing washed-out ImGui overlay colors without extra color-conversion passes.
+89. **Keen ECS Entity Lifecycle & Generational ABA Guard (`DreamEcsValidator`)**
+    - Reads entity lifecycle state byte at `[rcx + 0x2D]` (`0x01` Active, `0x02` PendingKill, `0x04` Unloading) and generational handle at `[rcx + 0x00]` to reject doomed entities before native interaction calls.
+90. **16-Player Dedicated Server Dynamic Backpressure (`DreamDynamicBackpressure`)**
+    - Hardware QPC server tick monitor with Exponential Moving Average (EMA) smoothing, scaling collection quotas dynamically between 2 and 24 items/tick across a fair-share per-player Round-Robin dispatch queue.
 
 ---
 
-## Verification Suite (74/74 Tests Passed - 100% Green)
+## Verification Suite (90/90 Tests Passed - 100% Green)
 
 ```text
 [TEST 1] Testing DreamCache...                         -> [PASS]
@@ -345,9 +387,25 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 [TEST 72] VEH CPU Register Context & Hardware Alignment  -> [PASS] (16-byte XMM stride preservation & strict hardware breakpoint alignment!)
 [TEST 73] DreamStore Hex Blobs, Strings & Dirty Versions -> [PASS] (Hex-encoded binary blobs, double %.17g precision & versioned flushes!)
 [TEST 74] DreamRpcMultiplexer Anti-Spoofing & Rate Limit -> [PASS] (Strict caller validation, default DENY, 120/s rate limit & duplicate check!)
+[TEST 75] Dedicated Server Scheduler Background Ticker     -> [PASS] (Headless timer driving delayed tasks without render loop!)
+[TEST 76] Full Subsystem Live Configuration Sync          -> [PASS] (Dynamic threshold sync across CrashGuard, Watchdog & Logs!)
+[TEST 77] DreamStore KV Storage & CrashGuard C-API Parity  -> [PASS] (Atomic flushes, fault query, circuit breaker reset & exports!)
+[TEST 78] Kernel-Safe Memory Probe & Canonical Range Guard -> [PASS] (Canonical range check, guard page filter & crash-free probing!)
+[TEST 79] Plugin Execution Gate & Zero-Freeze Draining     -> [PASS] (Lock-free TryEnter/Leave & FlushProcessWriteBuffers drain!)
+[TEST 80] GNS Out-of-Band Transport RPC Demux              -> [PASS] (Filtered out-of-band frames & compacted keen::net streams!)
+[TEST 81] Deterministic Gate-Action-Observe Event Pipeline  -> [PASS] (Claim exclusivity, Gate cancellation & synthetic loop guard!)
+[TEST 82] Raw Log Legacy Strip & Reentry Guard             -> [PASS] (Stripped duplicate timestamps/ANSI & broke recursive host logs!)
+[TEST 83] Engine Loop Recovery & Silent Telemetry Ring     -> [PASS] (Recovered server 0xA1394 & client 0x2A3034 batch loop crashes!)
+[TEST 84] Frame-Perfect Window Procedure Subclassing       -> [PASS] (ClientToScreen sync, async placement & Alt-Tab pop-in guard!)
+[TEST 85] Deterministic GNS Connection State Machine       -> [PASS] (Tracked GNS connection states, ping & auto-disconnect reset!)
+[TEST 86] Engine CFG Delta Auto-Discovery (+0x88A Parity)  -> [PASS] (Dynamic loop exit jump calculation & displacement resolution!)
+[TEST 87] Harvest Micro-Batch Throttling & Deduplication   -> [PASS] (14-item/tick quota, spatial radius filter & hash deduplication!)
+[TEST 88] Vulkan Swapchain Mutable Formats & UNORM Alias   -> [PASS] (Injected mutable flag, aliased sRGB to UNORM & zero-gamma wash!)
+[TEST 89] Keen ECS Lifecycle & Generational ABA Guard      -> [PASS] (Lifecycle byte 0x2D PendingKill rejection & generational guard!)
+[TEST 90] 16-Player Dedicated Server Dynamic Backpressure  -> [PASS] (Hardware QPC tick EMA smoothing & fair-share Round-Robin queue!)
 ```
 
-**ALL 74 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED! (100% Green)**
+**ALL 90 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED! (100% Green)**
 
 ---
 
