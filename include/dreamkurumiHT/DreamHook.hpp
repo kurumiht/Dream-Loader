@@ -898,10 +898,15 @@ private:
         auto snap = node->subscribersSnapshot.load();
         if (!snap) return;
 
+        static const int64_t s_qpcFreq = []() {
+            LARGE_INTEGER f;
+            QueryPerformanceFrequency(&f);
+            return (f.QuadPart > 0) ? f.QuadPart : 10000000LL;
+        }();
+
         for (const auto& sub : *snap) {
             if (sub.callback) {
-                LARGE_INTEGER freq, t0, t1;
-                QueryPerformanceFrequency(&freq);
+                LARGE_INTEGER t0, t1;
                 QueryPerformanceCounter(&t0);
 
                 DreamCrashGuard::ExecuteSafely(sub.name.empty() ? "ChainedSubscriber" : sub.name.c_str(), [&]() {
@@ -909,7 +914,7 @@ private:
                 });
 
                 QueryPerformanceCounter(&t1);
-                double elapsedMs = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)freq.QuadPart;
+                double elapsedMs = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)s_qpcFreq;
                 if (elapsedMs > 10.0) {
                     DREAM_LOG_WARN("[HookLatency] Subscriber '%s' took %.2f ms at %p (spike threshold: 10ms)",
                                    sub.name.empty() ? "unnamed" : sub.name.c_str(), elapsedMs, node->target);

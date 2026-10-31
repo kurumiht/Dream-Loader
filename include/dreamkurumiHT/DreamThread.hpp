@@ -144,7 +144,7 @@ private:
                 hThread = hNext;
 
                 if (GetThreadId(hThread) != currentThreadId) {
-                    if (m_suspendedCount < 256) {
+                    if (m_suspendedCount < MAX_FROZEN_THREADS) {
                         if (SuspendThread(hThread) != static_cast<DWORD>(-1)) {
                             HANDLE hSaved = nullptr;
                             if (DuplicateHandle(GetCurrentProcess(), hThread, GetCurrentProcess(), &hSaved, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
@@ -181,7 +181,7 @@ private:
         if (Thread32First(snapshot, &entry)) {
             do {
                 if (entry.th32OwnerProcessID == currentProcessId && entry.th32ThreadID != currentThreadId) {
-                    if (m_suspendedCount >= 256) break;
+                    if (m_suspendedCount >= MAX_FROZEN_THREADS) break;
 
                     HANDLE hThread = OpenThread(access, FALSE, entry.th32ThreadID);
                     if (hThread) {
@@ -230,8 +230,9 @@ private:
     const DreamIpMap* m_ipMap{nullptr};
     size_t m_ipMapCount{0};
 
+    static constexpr size_t MAX_FROZEN_THREADS = 1024;
     // Preallocated fixed buffer: ZERO malloc/HeapAlloc while threads are suspended!
-    HANDLE m_suspendedThreads[256]{nullptr};
+    HANDLE m_suspendedThreads[MAX_FROZEN_THREADS]{nullptr};
     size_t m_suspendedCount{0};
     size_t m_relocatedThreads{0};
 };

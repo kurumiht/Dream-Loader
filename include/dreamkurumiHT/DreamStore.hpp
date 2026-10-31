@@ -359,37 +359,44 @@ public:
         return m_storageDir;
     }
 
-    // Obtain or create a named namespace
+    // Obtain or create a named namespace (I/O performed outside m_masterMutex)
     std::shared_ptr<DreamStoreNamespace> GetNamespace(const std::string& nsName) {
+        std::string filePath;
+        {
+            std::lock_guard<std::mutex> lock(m_masterMutex);
+            auto it = m_namespaces.find(nsName);
+            if (it != m_namespaces.end()) {
+                return it->second;
+            }
+            filePath = GetNamespaceFilePath(nsName);
+        }
+
+        auto ns = std::make_shared<DreamStoreNamespace>(nsName);
+
+        // Sanity Check: Protect against oversized/corrupt files (16 MB cap) - done OUTSIDE m_masterMutex
+        std::error_code ec;
+        uintmax_t fileSize = std::filesystem::file_size(filePath, ec);
+        if (!ec && fileSize <= 16 * 1024 * 1024) {
+            // Attempt load from disk if file exists - performed outside lock so other namespaces aren't blocked
+            std::ifstream file(filePath);
+            if (file.is_open()) {
+                std::stringstream buffer;
+                buffer << file.rdbuf();
+                ns->Deserialize(buffer.str());
+                DREAM_LOG_DEBUG("DreamStore: Loaded namespace '%s' from '%s'", nsName.c_str(), filePath.c_str());
+            }
+        } else if (!ec && fileSize > 16 * 1024 * 1024) {
+            DREAM_LOG_ERROR("DreamStore: Store file '%s' exceeds 16MB limit (%llu bytes). Skipping load.",
+                            filePath.c_str(), static_cast<unsigned long long>(fileSize));
+        }
+
+        // Re-acquire lock to insert or return if raced concurrently
         std::lock_guard<std::mutex> lock(m_masterMutex);
         auto it = m_namespaces.find(nsName);
         if (it != m_namespaces.end()) {
             return it->second;
         }
-
-        auto ns = std::make_shared<DreamStoreNamespace>(nsName);
         m_namespaces[nsName] = ns;
-
-        std::string filePath = GetNamespaceFilePath(nsName);
-
-        // Sanity Check: Protect against oversized/corrupt files (16 MB cap)
-        std::error_code ec;
-        uintmax_t fileSize = std::filesystem::file_size(filePath, ec);
-        if (!ec && fileSize > 16 * 1024 * 1024) {
-            DREAM_LOG_ERROR("DreamStore: Store file '%s' exceeds 16MB limit (%llu bytes). Skipping load.",
-                            filePath.c_str(), static_cast<unsigned long long>(fileSize));
-            return ns;
-        }
-
-        // Attempt load from disk if file exists
-        std::ifstream file(filePath);
-        if (file.is_open()) {
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-            ns->Deserialize(buffer.str());
-            DREAM_LOG_DEBUG("DreamStore: Loaded namespace '%s' from '%s'", nsName.c_str(), filePath.c_str());
-        }
-
         return ns;
     }
 

@@ -226,6 +226,7 @@ private:
             DWORD64 dr6 = pExceptionInfo->ContextRecord->Dr6;
 
             bool handled = false;
+            bool hasExecuteBp = false;
             for (int i = 0; i < 4; ++i) {
                 if (!inst.m_breakpoints[i].active.load(std::memory_order_acquire)) continue;
 
@@ -239,6 +240,9 @@ private:
                 }
 
                 if (hit) {
+                    if (bpCond == BreakOn::Execute) {
+                        hasExecuteBp = true;
+                    }
                     auto& bp = inst.m_breakpoints[i];
                     if (bp.callback) {
                         DreamCpuContext ctx{};
@@ -253,8 +257,12 @@ private:
             }
 
             if (handled) {
-                // Resume Flag (RF) in EFLAGS so CPU executes instruction without re-triggering for Execute breakpoints
-                pExceptionInfo->ContextRecord->EFlags |= 0x10000;
+                // Resume Flag (RF) in EFLAGS only for Execute breakpoints (fault-type traps)
+                // so CPU executes instruction without re-triggering. Do NOT set RF for data watchpoints
+                // (Write / ReadWrite), as that would suppress valid execution breakpoints on the next instruction!
+                if (hasExecuteBp) {
+                    pExceptionInfo->ContextRecord->EFlags |= 0x10000;
+                }
                 pExceptionInfo->ContextRecord->Dr6 = 0;
 
                 return EXCEPTION_CONTINUE_EXECUTION;

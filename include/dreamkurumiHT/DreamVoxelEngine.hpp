@@ -253,19 +253,32 @@ public:
 
         float radiusSq = radius * radius;
         size_t count = 0;
+        float initialHealth = (material == VoxelMaterialType::Air) ? 0.0f : 100.0f;
+        bool isSolid = (material != VoxelMaterialType::Air && initialHealth > 0.0f);
 
-        for (int32_t z = minZ; z <= maxZ; ++z) {
-            for (int32_t y = minY; y <= maxY; ++y) {
-                for (int32_t x = minX; x <= maxX; ++x) {
-                    float dx = static_cast<float>(x) - cx;
-                    float dy = static_cast<float>(y) - cy;
-                    float dz = static_cast<float>(z) - cz;
-                    if ((dx * dx + dy * dy + dz * dz) <= radiusSq) {
-                        SetVoxel(x, y, z, material, (material == VoxelMaterialType::Air) ? 0.0f : 100.0f);
-                        count++;
+        {
+            // Acquire mutex once outside the 3D loop for massive multi-thousand voxel performance gain
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (int32_t z = minZ; z <= maxZ; ++z) {
+                for (int32_t y = minY; y <= maxY; ++y) {
+                    for (int32_t x = minX; x <= maxX; ++x) {
+                        float dx = static_cast<float>(x) - cx;
+                        float dy = static_cast<float>(y) - cy;
+                        float dz = static_cast<float>(z) - cz;
+                        if ((dx * dx + dy * dy + dz * dz) <= radiusSq) {
+                            uint64_t key = MakeCoordKey(x, y, z);
+                            VoxelBlock b;
+                            b.position = {x, y, z};
+                            b.material = material;
+                            b.health = initialHealth;
+                            b.isSolid = isSolid;
+                            m_voxelCache[key] = b;
+                            count++;
+                        }
                     }
                 }
             }
+            m_totalMutations += count;
         }
 
         DREAM_LOG_INFO("DreamVoxelEngine: Terraform sphere (R=%.1f) modified %zu voxels to material %u",
