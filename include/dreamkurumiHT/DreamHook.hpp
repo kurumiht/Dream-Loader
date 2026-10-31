@@ -186,6 +186,14 @@ public:
                     return false;
                 }
 
+                // Relocation Guard: Reject CALL instructions in the middle of stolen bytes (unsafe for stack unwinding)
+                if ((curOffset + decoded.length) < m_stolenLen &&
+                    DreamDisasm::IsCall(decoded.opcode, decoded.modrmReg)) {
+                    DREAM_LOG_WARN("DreamInlineHook: Mid-region CALL instruction (0x%02X) detected at 0x%p (unsafe for stack unwinding)",
+                                   decoded.opcode, m_target + curOffset);
+                    return false;
+                }
+
                 if (m_ipMapCount < 16) {
                     m_ipMap[m_ipMapCount++] = { static_cast<uint16_t>(curOffset), static_cast<uint16_t>(trampOffset) };
                 }
@@ -675,6 +683,14 @@ public:
                     return false;
                 }
 
+                // Relocation Guard: Reject CALL instructions in the middle of stolen bytes (unsafe for stack unwinding)
+                if ((stolenOffset + decoded.length) < m_stolenLen &&
+                    DreamDisasm::IsCall(decoded.opcode, decoded.modrmReg)) {
+                    DREAM_LOG_WARN("DreamMidHook: Mid-region CALL instruction (0x%02X) detected at 0x%p (unsafe for stack unwinding)",
+                                   decoded.opcode, m_target + stolenOffset);
+                    return false;
+                }
+
                 size_t instrStart = code.size();
                 if (m_ipMapCount < 16) {
                     m_ipMap[m_ipMapCount++] = {
@@ -904,20 +920,29 @@ private:
             return (f.QuadPart > 0) ? f.QuadPart : 10000000LL;
         }();
 
+        thread_local uint32_t tl_sampleCounter = 0;
+        const bool shouldMeasure = ((++tl_sampleCounter & 0x0F) == 0);
+
         for (const auto& sub : *snap) {
             if (sub.callback) {
-                LARGE_INTEGER t0, t1;
-                QueryPerformanceCounter(&t0);
+                if (shouldMeasure) {
+                    LARGE_INTEGER t0, t1;
+                    QueryPerformanceCounter(&t0);
 
-                DreamCrashGuard::ExecuteSafely(sub.name.empty() ? "ChainedSubscriber" : sub.name.c_str(), [&]() {
-                    sub.callback(ctx);
-                });
+                    DreamCrashGuard::ExecuteSafely(sub.name.empty() ? "ChainedSubscriber" : sub.name.c_str(), [&]() {
+                        sub.callback(ctx);
+                    });
 
-                QueryPerformanceCounter(&t1);
-                double elapsedMs = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)s_qpcFreq;
-                if (elapsedMs > 10.0) {
-                    DREAM_LOG_WARN("[HookLatency] Subscriber '%s' took %.2f ms at %p (spike threshold: 10ms)",
-                                   sub.name.empty() ? "unnamed" : sub.name.c_str(), elapsedMs, node->target);
+                    QueryPerformanceCounter(&t1);
+                    double elapsedMs = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)s_qpcFreq;
+                    if (elapsedMs > 10.0) {
+                        DREAM_LOG_WARN("[HookLatency] Subscriber '%s' took %.2f ms at %p (spike threshold: 10ms)",
+                                       sub.name.empty() ? "unnamed" : sub.name.c_str(), elapsedMs, node->target);
+                    }
+                } else {
+                    DreamCrashGuard::ExecuteSafely(sub.name.empty() ? "ChainedSubscriber" : sub.name.c_str(), [&]() {
+                        sub.callback(ctx);
+                    });
                 }
             }
         }

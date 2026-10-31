@@ -8,6 +8,7 @@
 
 #include <windows.h>
 #include <cstdio>
+#include <cstring>
 
 using SelfTestFn = int (*)(char*, int);
 using SmokeFn    = int (*)();

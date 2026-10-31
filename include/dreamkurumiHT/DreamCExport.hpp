@@ -13,8 +13,12 @@
 extern "C" {
 
 // ============================================================================
-// Core Lifecycle
+// Core Lifecycle & Versioning
 // ============================================================================
+DK_API uint32_t DK_GetAbiVersion() {
+    return 0x00010000;
+}
+
 DK_API bool DK_Initialize(const char* cachePath) {
     return dreamkurumi::DreamCache::Instance().Initialize(cachePath ? cachePath : "dreamkurumi_cache.ini");
 }
@@ -76,6 +80,7 @@ DK_API bool DK_Unhook(void* hookHandle) {
 // Mid-Function Hooking (Register Interception)
 // ============================================================================
 using DK_MidHookCallback = void (*)(dreamkurumi::DreamCpuContext* ctx);
+using DK_MidHook2Callback = void (*)(dreamkurumi::DreamCpuContext* ctx, void* userData);
 
 DK_API void* DK_MidHook(void* target, DK_MidHookCallback cb) {
     if (!target || !cb) return nullptr;
@@ -83,6 +88,17 @@ DK_API void* DK_MidHook(void* target, DK_MidHookCallback cb) {
     // Wrap to match MidHookCallback signature
     auto lambdaCb = reinterpret_cast<dreamkurumi::MidHookCallback>(cb);
     if (hook->Install(target, lambdaCb)) {
+        return hook;
+    }
+    delete hook;
+    return nullptr;
+}
+
+DK_API void* DK_MidHook2(void* target, DK_MidHook2Callback cb, void* userData) {
+    if (!target || !cb) return nullptr;
+    auto* hook = new dreamkurumi::DreamMidHook();
+    auto lambdaCb = reinterpret_cast<dreamkurumi::MidHookContextCallback>(cb);
+    if (hook->Install(target, lambdaCb, userData)) {
         return hook;
     }
     delete hook;
@@ -186,7 +202,8 @@ DK_API bool DK_RestorePatch(void* patchHandle) {
 // ============================================================================
 // Logging
 // ============================================================================
-DK_API void DK_SetLogCallback(void (*cb)(const char* msg)) {
+// Deprecated: Host uses XhlPluginContext or DreamLogBridgeV1 directly
+void DK_SetLogCallback(void (*cb)(const char* msg)) {
     dreamkurumi::DreamLog::Instance().SetExternalCallback(cb);
 }
 
@@ -293,17 +310,17 @@ DK_API void DK_Overlay_RegisterCommand(const char* cmdName, DK_CommandCallback c
 }
 
 // ============================================================================
-// Server Policy & Anti-Cheat
+// Server Policy & Anti-Cheat (Internal Host / Core Engine only)
 // ============================================================================
-DK_API void DK_Policy_EnforceStrictRules() {
+void DK_Policy_EnforceStrictRules() {
     dreamkurumi::DreamServerPolicy::Instance().EnforceStrictServerRules();
 }
 
-DK_API void DK_Policy_AllowAllFeatures() {
+void DK_Policy_AllowAllFeatures() {
     dreamkurumi::DreamServerPolicy::Instance().AllowAllFeatures();
 }
 
-DK_API void DK_Policy_SetFeatureAllowed(int feature, bool allowed) {
+void DK_Policy_SetFeatureAllowed(int feature, bool allowed) {
     if (feature >= 0 && feature < static_cast<int>(dreamkurumi::PresetFeature::Count)) {
         dreamkurumi::DreamServerPolicy::Instance().SetFeatureAllowed(
             static_cast<dreamkurumi::PresetFeature>(feature), allowed
@@ -311,7 +328,7 @@ DK_API void DK_Policy_SetFeatureAllowed(int feature, bool allowed) {
     }
 }
 
-DK_API bool DK_Policy_IsFeatureAllowed(int feature) {
+bool DK_Policy_IsFeatureAllowed(int feature) {
     if (feature >= 0 && feature < static_cast<int>(dreamkurumi::PresetFeature::Count)) {
         return dreamkurumi::DreamServerPolicy::Instance().IsFeatureAllowed(
             static_cast<dreamkurumi::PresetFeature>(feature)
@@ -320,11 +337,11 @@ DK_API bool DK_Policy_IsFeatureAllowed(int feature) {
     return false;
 }
 
-DK_API bool DK_Policy_SavePolicy(const char* path) {
+bool DK_Policy_SavePolicy(const char* path) {
     return dreamkurumi::DreamServerPolicy::Instance().SavePolicy(path ? path : "server_policy.ini");
 }
 
-DK_API bool DK_Policy_LoadPolicy(const char* path) {
+bool DK_Policy_LoadPolicy(const char* path) {
     return dreamkurumi::DreamServerPolicy::Instance().LoadPolicy(path ? path : "server_policy.ini");
 }
 
@@ -425,7 +442,8 @@ DK_API void* DK_Game_GetLocalPlayer() {
     return dreamkurumi::DreamGameContext::Instance().GetLocalPlayer();
 }
 
-DK_API void DK_Game_SetLocalPlayer(void* playerPtr) {
+// Internal engine wiring for local player
+void DK_Game_SetLocalPlayer(void* playerPtr) {
     dreamkurumi::DreamGameContext::Instance().SetLocalPlayer(playerPtr);
 }
 
@@ -437,15 +455,16 @@ DK_API bool DK_Game_TeleportPlayer(float x, float y, float z) {
     return dreamkurumi::DreamGameContext::Instance().TeleportPlayer(x, y, z);
 }
 
-DK_API void DK_Game_SetGodMode(bool enabled) {
+// Internal aliases of DK_Preset_Set*
+void DK_Game_SetGodMode(bool enabled) {
     dreamkurumi::DreamGameContext::Instance().SetGodMode(enabled);
 }
 
-DK_API void DK_Game_SetGhostMode(bool enabled) {
+void DK_Game_SetGhostMode(bool enabled) {
     dreamkurumi::DreamGameContext::Instance().SetGhostMode(enabled);
 }
 
-DK_API void DK_Game_SetInfiniteStamina(bool enabled) {
+void DK_Game_SetInfiniteStamina(bool enabled) {
     dreamkurumi::DreamGameContext::Instance().SetInfiniteStamina(enabled);
 }
 
@@ -477,7 +496,8 @@ DK_API bool DK_Player_Kick(uint32_t entityId, const char* reason) {
 using DK_PlayerKickCallback = void (*)(uint32_t entityId, const char* reason);
 using DK_PlayerBroadcastCallback = void (*)(const char* message);
 
-DK_API void DK_Player_SetKickCallback(DK_PlayerKickCallback cb) {
+// Internal dedicated server host wiring
+void DK_Player_SetKickCallback(DK_PlayerKickCallback cb) {
     if (cb) {
         dreamkurumi::DreamPlayerRegistry::Instance().SetKickCallback([cb](uint32_t id, const std::string& reason) {
             cb(id, reason.c_str());
@@ -485,7 +505,7 @@ DK_API void DK_Player_SetKickCallback(DK_PlayerKickCallback cb) {
     }
 }
 
-DK_API void DK_Player_SetBroadcastCallback(DK_PlayerBroadcastCallback cb) {
+void DK_Player_SetBroadcastCallback(DK_PlayerBroadcastCallback cb) {
     if (cb) {
         dreamkurumi::DreamPlayerRegistry::Instance().SetBroadcastCallback([cb](const std::string& msg) {
             cb(msg.c_str());
@@ -603,13 +623,13 @@ DK_API void DK_Config_SetBool(const char* fullKey, bool val) {
 }
 
 // ============================================================================
-// Harmony Native Engine
+// Harmony Native Engine (Internal aliases for DK_PatchAll / DK_UnpatchAll)
 // ============================================================================
-DK_API size_t DK_Harmony_PatchAll() {
+size_t DK_Harmony_PatchAll() {
     return dreamkurumi::DreamHarmony::PatchAll();
 }
 
-DK_API void DK_Harmony_UnpatchAll() {
+void DK_Harmony_UnpatchAll() {
     dreamkurumi::DreamHarmony::UnpatchAll();
 }
 

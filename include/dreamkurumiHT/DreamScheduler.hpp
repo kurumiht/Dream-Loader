@@ -141,8 +141,10 @@ public:
 
             auto now = std::chrono::steady_clock::now();
             std::vector<YieldTask> remainingYields;
+            size_t processedIdx = 0;
 
-            for (auto& yt : activeYields) {
+            for (; processedIdx < activeYields.size(); ++processedIdx) {
+                auto& yt = activeYields[processedIdx];
                 if (IsCancelled(yt.id)) continue;
 
                 bool ready = false;
@@ -167,7 +169,17 @@ public:
                     remainingYields.push_back(std::move(yt));
                 }
 
-                if (isTimeExhausted()) break;
+                if (isTimeExhausted()) {
+                    ++processedIdx;
+                    break;
+                }
+            }
+
+            // Preserve all yields that were not reached before time was exhausted!
+            for (; processedIdx < activeYields.size(); ++processedIdx) {
+                if (!IsCancelled(activeYields[processedIdx].id)) {
+                    remainingYields.push_back(std::move(activeYields[processedIdx]));
+                }
             }
 
             if (!remainingYields.empty()) {
@@ -197,12 +209,23 @@ public:
                 }
             }
 
-            for (auto& dt : readyTasks) {
+            for (size_t i = 0; i < readyTasks.size(); ++i) {
                 DreamCrashGuard::ExecuteSafely("SchedulerDelayedTask", [&]() {
-                    dt.task();
+                    readyTasks[i].task();
                 });
                 executedCount++;
-                if (isTimeExhausted()) break;
+                if (isTimeExhausted()) {
+                    // Put remaining unexecuted tasks back into m_delayedTasks
+                    if (i + 1 < readyTasks.size()) {
+                        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+                        for (size_t rem = i + 1; rem < readyTasks.size(); ++rem) {
+                            if (!IsCancelled(readyTasks[rem].id)) {
+                                m_delayedTasks.push_back(std::move(readyTasks[rem]));
+                            }
+                        }
+                    }
+                    break;
+                }
             }
         }
 
@@ -220,7 +243,8 @@ public:
                 }
             }
 
-            for (auto& rt : tasksToRun) {
+            for (size_t i = 0; i < tasksToRun.size(); ++i) {
+                auto& rt = tasksToRun[i];
                 bool keepRunning = true;
                 DreamCrashGuard::ExecuteSafely("SchedulerRecurringTask", [&]() {
                     keepRunning = rt.task();
@@ -229,7 +253,21 @@ public:
                 if (!keepRunning) {
                     Cancel(rt.id);
                 }
-                if (isTimeExhausted()) break;
+                if (isTimeExhausted()) {
+                    // Reset nextRunAt for unexecuted tasks so they run on the very next tick
+                    if (i + 1 < tasksToRun.size()) {
+                        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+                        for (size_t rem = i + 1; rem < tasksToRun.size(); ++rem) {
+                            for (auto& task : m_recurringTasks) {
+                                if (task.id == tasksToRun[rem].id) {
+                                    task.nextRunAt = now;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
             }
         }
 

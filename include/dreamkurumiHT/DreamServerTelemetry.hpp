@@ -48,9 +48,12 @@ public:
         slot.occurrenceCount = 1;
         slot.severity        = severity;
         slot.visualFlags     = 0x01; // Strictly visual-only (No audio chime)
-        for (size_t i = 0; i < 19 && modTag && modTag[i]; ++i) {
-            slot.tag[i] = modTag[i];
-            slot.tag[i + 1] = '\0';
+        slot.tag[0] = '\0';
+        if (modTag) {
+            for (size_t i = 0; i < 19 && modTag[i]; ++i) {
+                slot.tag[i] = modTag[i];
+                slot.tag[i + 1] = '\0';
+            }
         }
 
         m_writeIdx.store(w + 1, std::memory_order_release);
@@ -75,25 +78,32 @@ public:
         if (r == w) return 0;
 
         uint32_t flushedCount = 0;
-        // Coalesce identical RVA faults in the flush window into a single packet
-        TelemetryAlertPacket merged = m_ring[r & (RING_SIZE - 1)];
-        r++;
-        flushedCount++;
+        // Group and coalesce identical (faultRva, faultCode) alerts into combined packets
+        std::vector<TelemetryAlertPacket> mergedPackets;
         while (r != w) {
-            const auto& next = m_ring[r & (RING_SIZE - 1)];
-            if (next.faultRva == merged.faultRva && next.faultCode == merged.faultCode) {
-                merged.occurrenceCount++;
+            const auto& pkt = m_ring[r & (RING_SIZE - 1)];
+            bool found = false;
+            for (auto& m : mergedPackets) {
+                if (m.faultRva == pkt.faultRva && m.faultCode == pkt.faultCode) {
+                    m.occurrenceCount += pkt.occurrenceCount;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                mergedPackets.push_back(pkt);
             }
             r++;
             flushedCount++;
         }
         m_readIdx.store(w, std::memory_order_release);
 
-        NetBufferWriter writer(sizeof(TelemetryAlertPacket));
-        writer.WriteBytes(&merged, sizeof(TelemetryAlertPacket));
-
-        // Broadcast over out-of-band GNS channel
-        DreamRpcMultiplexer::Instance().Broadcast("DreamTelemetryAlert", writer);
+        for (const auto& merged : mergedPackets) {
+            NetBufferWriter writer(sizeof(TelemetryAlertPacket));
+            writer.WriteBytes(&merged, sizeof(TelemetryAlertPacket));
+            // Broadcast over out-of-band GNS channel
+            DreamRpcMultiplexer::Instance().Broadcast("DreamTelemetryAlert", writer);
+        }
         return flushedCount;
     }
 

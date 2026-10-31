@@ -86,6 +86,7 @@ public:
     // Example: ReadChain<float>(pPlayer, { 0x18, 0x30, 0x48 }, 100.0f)
     template <typename T>
     static T ReadChain(const void* baseAddress, const std::vector<uintptr_t>& offsets, T fallback = T{}) {
+        if (offsets.empty()) return fallback;
         if (!MemoryHelper::IsSafeToProbeAddress(baseAddress, sizeof(uintptr_t))) return fallback;
         uintptr_t current = reinterpret_cast<uintptr_t>(baseAddress);
 

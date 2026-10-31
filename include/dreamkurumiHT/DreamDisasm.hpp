@@ -99,6 +99,14 @@ public:
         return false;
     }
 
+    // Check if instruction is a CALL (direct or indirect)
+    static bool IsCall(uint8_t opcode, uint8_t modrmReg = 0) {
+        if (opcode == 0xE8) return true; // Direct CALL rel32
+        if (opcode == 0x9A) return true; // Far CALL
+        if (opcode == 0xFF && (modrmReg == 2 || modrmReg == 3)) return true; // Indirect CALL (FF /2 or FF /3)
+        return false;
+    }
+
 // ========================================================================
     // Checks if an address starts with an existing hook (E9 / FF 25 / EB)
     // Multi-Loader Coexistence Shield (EML, ShroudForge, Steam/OBS Overlays)

@@ -40,6 +40,10 @@ api: DK_Event_Publish | size_t | const char*, const void*, size_t
 api: DK_Event_Subscribe | uint64_t | const char*, FNPTR, void*
 api: DK_Event_Unsubscribe | bool | uint64_t
 api: DK_ExecuteProtected | bool | const char*, FNPTR, void*
+api: DK_Game_GetLocalPlayer | void* | void
+api: DK_Game_IsPlayerReady | bool | void
+api: DK_Game_TeleportPlayer | bool | float, float, float
+api: DK_GetAbiVersion | uint32_t | void
 api: DK_GetEntity | void* | void*, uint32_t
 api: DK_GetEntityComponent | void* | void*, uint16_t
 api: DK_GetEntityPosition | bool | void*, float*, float*, float*
@@ -49,15 +53,22 @@ api: DK_GetWorldCursor | bool | DreamWorldCursor*
 api: DK_GetWorldCursorPosition | bool | float*, float*, float*
 api: DK_GetWorldCursorRay | bool | float*, float*, float*, float*, float*, float*
 api: DK_Gns_FilterAndDemux | int | void**, int, bool
+api: DK_Hash_Fnv1a64 | uint64_t | const char*
 api: DK_Hook_HasExistingHook | bool | const void*, uintptr_t*
 api: DK_Initialize | bool | const char*
 api: DK_InlineHook | void* | void*, void*, void**
 api: DK_Log | void | int, const char*
 api: DK_MidHook | void* | void*, FNPTR
+api: DK_MidHook2 | void* | void*, FNPTR, void*
 api: DK_MidUnhook | bool | void*
+api: DK_Net_BroadcastToClients | bool | uint64_t, uint16_t, const uint8_t*, uint32_t
+api: DK_Net_SendToServer | bool | uint64_t, uint16_t, const uint8_t*, uint32_t
+api: DK_Net_SyncGetVar | bool | const char*, char*, uint32_t
+api: DK_Net_SyncSetVar | void | const char*, const char*
 api: DK_Nop | void* | void*, size_t
 api: DK_Overlay_ExecuteCommand | bool | const char*
 api: DK_Overlay_IsMenuOpen | bool | void
+api: DK_Overlay_RegisterCommand | void | const char*, FNPTR, const char*
 api: DK_Overlay_SetMenuKey | void | int
 api: DK_Overlay_ToggleMenu | void | void
 api: DK_PatchAll | size_t | void
@@ -121,27 +132,3 @@ api: DK_Vulkan_GenerateLayerManifest | bool | const char*, const char*, const ch
 api: DK_Watchdog_Heartbeat | void | void
 api: DK_Watchdog_RegisterThread | void | const char*
 # unlisted: exported but not part of the documented plugin header (public by accident until decided)
-unlisted: DK_Game_GetLocalPlayer | void* | void
-unlisted: DK_Game_IsPlayerReady | bool | void
-unlisted: DK_Game_SetGhostMode | void | bool
-unlisted: DK_Game_SetGodMode | void | bool
-unlisted: DK_Game_SetInfiniteStamina | void | bool
-unlisted: DK_Game_SetLocalPlayer | void | void*
-unlisted: DK_Game_TeleportPlayer | bool | float, float, float
-unlisted: DK_Harmony_PatchAll | size_t | void
-unlisted: DK_Harmony_UnpatchAll | void | void
-unlisted: DK_Hash_Fnv1a64 | uint64_t | const char*
-unlisted: DK_Net_BroadcastToClients | bool | uint64_t, uint16_t, const uint8_t*, uint32_t
-unlisted: DK_Net_SendToServer | bool | uint64_t, uint16_t, const uint8_t*, uint32_t
-unlisted: DK_Net_SyncGetVar | bool | const char*, char*, uint32_t
-unlisted: DK_Net_SyncSetVar | void | const char*, const char*
-unlisted: DK_Overlay_RegisterCommand | void | const char*, FNPTR, const char*
-unlisted: DK_Player_SetBroadcastCallback | void | FNPTR
-unlisted: DK_Player_SetKickCallback | void | FNPTR
-unlisted: DK_Policy_AllowAllFeatures | void | void
-unlisted: DK_Policy_EnforceStrictRules | void | void
-unlisted: DK_Policy_IsFeatureAllowed | bool | int
-unlisted: DK_Policy_LoadPolicy | bool | const char*
-unlisted: DK_Policy_SavePolicy | bool | const char*
-unlisted: DK_Policy_SetFeatureAllowed | void | int, bool
-unlisted: DK_SetLogCallback | void | FNPTR

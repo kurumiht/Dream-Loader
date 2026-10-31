@@ -41,13 +41,14 @@ class DreamLiveConfig;
 template <typename T>
 class ConfigEntry {
 public:
-    ConfigEntry() = default;
+    ConfigEntry() : m_callbacks(std::make_shared<std::vector<std::function<void(const T&)>>>()) {}
     ConfigEntry(const std::string& section, const std::string& key, const T& defaultValue,
                 const std::string& description, std::shared_ptr<T> pVal)
         : m_section(section), m_key(key),
           m_fullKey(section.empty() ? key : (section + "." + key)),
           m_defaultValue(defaultValue), m_description(description),
-          m_pValue(pVal) {}
+          m_pValue(pVal),
+          m_callbacks(std::make_shared<std::vector<std::function<void(const T&)>>>()) {}
 
     T Get() const {
         if (m_pValue) return *m_pValue;
@@ -67,11 +68,14 @@ public:
 
     void OnChange(std::function<void(const T&)> cb) {
         if (!cb) return;
-        m_callbacks.push_back(cb);
+        if (!m_callbacks) m_callbacks = std::make_shared<std::vector<std::function<void(const T&)>>>();
+        m_callbacks->push_back(cb);
     }
 
     void NotifyChanged(const T& val) {
-        for (const auto& cb : m_callbacks) {
+        if (!m_callbacks) return;
+        auto cbs = *m_callbacks;
+        for (const auto& cb : cbs) {
             try { cb(val); } catch (...) {}
         }
     }
@@ -83,7 +87,7 @@ private:
     T m_defaultValue{};
     std::string m_description;
     std::shared_ptr<T> m_pValue;
-    std::vector<std::function<void(const T&)>> m_callbacks;
+    std::shared_ptr<std::vector<std::function<void(const T&)>>> m_callbacks;
 };
 
 // ============================================================================
@@ -449,7 +453,6 @@ inline void ConfigEntry<bool>::Set(const bool& val) {
     if (m_pValue) {
         *m_pValue = val;
         DreamLiveConfig::Instance().Set(m_fullKey, val ? "true" : "false");
-        NotifyChanged(val);
     }
 }
 
@@ -460,7 +463,6 @@ inline void ConfigEntry<float>::Set(const float& val) {
         std::ostringstream ss;
         ss << std::fixed << std::setprecision(2) << val;
         DreamLiveConfig::Instance().Set(m_fullKey, ss.str());
-        NotifyChanged(val);
     }
 }
 
@@ -469,7 +471,6 @@ inline void ConfigEntry<int>::Set(const int& val) {
     if (m_pValue) {
         *m_pValue = val;
         DreamLiveConfig::Instance().Set(m_fullKey, std::to_string(val));
-        NotifyChanged(val);
     }
 }
 
@@ -478,7 +479,6 @@ inline void ConfigEntry<std::string>::Set(const std::string& val) {
     if (m_pValue) {
         *m_pValue = val;
         DreamLiveConfig::Instance().Set(m_fullKey, val);
-        NotifyChanged(val);
     }
 }
 

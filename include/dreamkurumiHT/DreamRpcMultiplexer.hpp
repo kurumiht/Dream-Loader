@@ -341,10 +341,15 @@ private:
         std::vector<uint8_t> frame = PackRpcFrame(callerId, targetId, hash, payload);
 
         // 1. If raw sender hook is configured, send via game's network
-        if (m_rawSender) {
+        std::function<bool(const uint8_t* data, size_t size)> sender;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            sender = m_rawSender;
+        }
+        if (sender) {
             bool sent = false;
             DreamCrashGuard::ExecuteSafely("RpcRawSend", [&]() {
-                sent = m_rawSender(frame.data(), frame.size());
+                sent = sender(frame.data(), frame.size());
             });
             if (sent) return true;
         }

@@ -180,6 +180,7 @@ public:
 
     // Start background watchdog monitor
     void Start(uint32_t checkIntervalMs = 500, uint32_t timeoutMs = 5000) {
+        std::lock_guard<std::mutex> lock(m_mutex);
         if (m_isRunning.load()) return;
         m_checkIntervalMs = checkIntervalMs;
         m_timeoutMs = timeoutMs;
@@ -205,8 +206,8 @@ public:
 
     // Stop background watchdog monitor
     void Stop() {
-        if (!m_isRunning.load()) return;
-        m_isRunning.store(false);
+        bool wasRunning = m_isRunning.exchange(false);
+        if (!wasRunning) return;
         if (m_monitorThread.joinable()) {
             if (m_monitorThread.get_id() != std::this_thread::get_id()) {
                 m_monitorThread.join();

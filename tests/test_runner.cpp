@@ -3864,6 +3864,83 @@ int main() {
         std::cout << "  [PASS] Test 90 (16-Player Dynamic Backpressure) fully verified!\n\n";
     }
 
+    {
+        std::cout << "[TEST 91] Testing ConfigEntry::OnChange & ReadChain Safety...\n";
+        auto entry = dreamkurumi::DreamLiveConfig::Instance().Bind("AuditTest", "TestRadius", 3.5f, "Test radius");
+        float observedVal = 0.0f;
+        int callCount = 0;
+        entry.OnChange([&](float v) {
+            observedVal = v;
+            callCount++;
+        });
+
+        // Mutate via DreamLiveConfig::Set
+        dreamkurumi::DreamLiveConfig::Instance().Set("audittest.testradius", "7.5");
+        assert(callCount == 1);
+        assert(observedVal == 7.5f);
+        assert(entry.Get() == 7.5f);
+
+        // Mutate via ConfigEntry::Set
+        entry.Set(10.0f);
+        assert(callCount == 2);
+        assert(observedVal == 10.0f);
+        assert(entry.Get() == 10.0f);
+
+        // Test DreamMemory::ReadChain with empty offsets
+        int dummy = 42;
+        int resFallback = dreamkurumi::DreamMemory::ReadChain<int>(&dummy, {}, 999);
+        assert(resFallback == 999);
+
+        // Test DK_GetAbiVersion parity
+        assert(DK_GetAbiVersion() == 0x00010000);
+
+        std::cout << "  ConfigEntry::OnChange callback propagation on value copy -> [PASS]\n";
+        std::cout << "  DreamMemory::ReadChain empty offsets guard -> [PASS]\n";
+        std::cout << "  DK_GetAbiVersion() parity (0x10000) -> [PASS]\n";
+        std::cout << "  [PASS] Test 91 (ConfigEntry OnChange & ReadChain Safety) fully verified!\n\n";
+    }
+
+    {
+        std::cout << "[TEST 92] Testing DreamScheduler Time Budget Preservation & Telemetry Grouping...\n";
+        auto& sched = dreamkurumi::DreamScheduler::Instance();
+
+        // 1. Test YieldUntil preservation when time budget is forced to exhaust
+        bool readyFlag1 = false;
+        bool readyFlag2 = false;
+        bool executed1 = false;
+        bool executed2 = false;
+
+        sched.YieldUntil([&]() { return readyFlag1; }, [&]() { executed1 = true; });
+        sched.YieldUntil([&]() { return readyFlag2; }, [&]() { executed2 = true; });
+
+        // Tick with 0.0001ms (exhausts immediately after evaluating at most 1)
+        sched.Tick(0.0001);
+
+        // Neither was ready, so BOTH must still be preserved in m_yieldTasks!
+        readyFlag1 = true;
+        readyFlag2 = true;
+        // Now tick with generous budget
+        sched.Tick(100.0);
+        assert(executed1 == true);
+        assert(executed2 == true);
+
+        // 2. Test DreamServerTelemetry multi-RVA coalescing
+        auto& telem = dreamkurumi::DreamServerTelemetry::Instance();
+        telem.ResetForTest();
+        telem.PushRecoveredFault(0xC0000005, 0xA1394, "ServerLoop", 2);
+        telem.PushRecoveredFault(0xC0000005, 0xA1394, "ServerLoop", 2); // Duplicate: should coalesce
+        telem.PushRecoveredFault(0xC0000005, 0x2A3034, "ClientLoop", 1); // Different RVA: must NOT be swallowed!
+
+        assert(telem.GetPendingCount() == 3);
+        uint32_t flushed = telem.FlushCoalescedAlerts();
+        assert(flushed == 3);
+        assert(telem.GetPendingCount() == 0);
+
+        std::cout << "  DreamScheduler YieldUntil task preservation on time exhaustion -> [PASS]\n";
+        std::cout << "  DreamServerTelemetry multi-RVA distinct alert broadcast -> [PASS]\n";
+        std::cout << "  [PASS] Test 92 (Scheduler Budget Preservation & Telemetry Grouping) fully verified!\n\n";
+    }
+
     // Cleanly stop any background singletons before process exit
     dreamkurumi::DreamToast::Instance().Shutdown();
     dreamkurumi::DreamWatchdog::Instance().Stop();
@@ -3873,7 +3950,7 @@ int main() {
     dreamkurumi::DreamCrashGuard::Shutdown();
 
     std::cout << "============================================================\n";
-    std::cout << " ALL 90 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
+    std::cout << " ALL 92 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
     std::cout << "============================================================\n" << std::flush;
 
     TerminateProcess(GetCurrentProcess(), 0);

@@ -102,18 +102,23 @@ static_assert(sizeof(DreamWorldCursor) == 52, "DreamWorldCursor size must be 52 
 
 // Function pointer signatures for all core dreamkurumiHT exports
 typedef bool (*FnDK_Initialize)(const char* cachePath);
+typedef uint32_t (*FnDK_GetAbiVersion)();
 typedef size_t (*FnDK_PatchAll)();
 typedef void (*FnDK_UnpatchAll)();
 typedef void* (*FnDK_Resolve)(const char* symbolName, uintptr_t fallbackRva);
 typedef void* (*FnDK_ResolvePattern)(const char* symbolName, const char* pattern, uintptr_t fallbackRva);
 typedef uintptr_t (*FnDK_GetModuleBase)();
 typedef uint32_t (*FnDK_GetGameBuildTimestamp)();
+typedef uint64_t (*FnDK_Hash_Fnv1a64)(const char* str);
 
 typedef void* (*FnDK_InlineHook)(void* target, void* detour, void** ppOriginal);
 typedef bool (*FnDK_Unhook)(void* hookHandle);
-typedef void* (*FnDK_MidHook)(void* target, void (*cb)(void* ctx));
+using DK_MidHookCallback = void (*)(DreamCpuContext* ctx);
+using DK_MidHook2Callback = void (*)(DreamCpuContext* ctx, void* userData);
+typedef void* (*FnDK_MidHook)(void* target, DK_MidHookCallback cb);
+typedef void* (*FnDK_MidHook2)(void* target, DK_MidHook2Callback cb, void* userData);
 typedef bool (*FnDK_MidUnhook)(void* hookHandle);
-typedef bool (*FnDK_RegisterChainedMidHook)(void* target, void (*cb)(void* ctx), int priority, const char* name);
+typedef bool (*FnDK_RegisterChainedMidHook)(void* target, DK_MidHookCallback cb, int priority, const char* name);
 typedef void* (*FnDK_PatchBytes)(void* target, const uint8_t* bytes, size_t count);
 typedef void* (*FnDK_Nop)(void* target, size_t count);
 typedef bool (*FnDK_RestorePatch)(void* patchHandle);
@@ -127,6 +132,16 @@ typedef bool (*FnDK_GetWorldCursorRay)(float* outOriginX, float* outOriginY, flo
                                       float* outDirX, float* outDirY, float* outDirZ);
 typedef bool (*FnDK_GetWorldCursor)(DreamWorldCursor* outCursor);
 typedef void (*FnDK_SetWorldCursor)(const DreamWorldCursor* inCursor);
+
+typedef void* (*FnDK_Game_GetLocalPlayer)();
+typedef bool (*FnDK_Game_IsPlayerReady)();
+typedef bool (*FnDK_Game_TeleportPlayer)(float x, float y, float z);
+typedef void (*DK_CommandCallback)(const char* args);
+typedef void (*FnDK_Overlay_RegisterCommand)(const char* cmdName, DK_CommandCallback callback, const char* desc);
+typedef bool (*FnDK_Net_SendToServer)(uint64_t channelHash, uint16_t opcode, const uint8_t* payload, uint32_t payloadSize);
+typedef bool (*FnDK_Net_BroadcastToClients)(uint64_t channelHash, uint16_t opcode, const uint8_t* payload, uint32_t payloadSize);
+typedef void (*FnDK_Net_SyncSetVar)(const char* key, const char* value);
+typedef bool (*FnDK_Net_SyncGetVar)(const char* key, char* outBuffer, uint32_t outSize);
 
 typedef void (*FnDK_Log)(int level, const char* msg);
 
@@ -287,16 +302,19 @@ public:
 
         #define BIND_DK(name) pfn_##name = (Fn##name)GetProcAddress(m_hMod, #name)
         BIND_DK(DK_Initialize);
+        BIND_DK(DK_GetAbiVersion);
         BIND_DK(DK_PatchAll);
         BIND_DK(DK_UnpatchAll);
         BIND_DK(DK_Resolve);
         BIND_DK(DK_ResolvePattern);
         BIND_DK(DK_GetModuleBase);
         BIND_DK(DK_GetGameBuildTimestamp);
+        BIND_DK(DK_Hash_Fnv1a64);
 
         BIND_DK(DK_InlineHook);
         BIND_DK(DK_Unhook);
         BIND_DK(DK_MidHook);
+        BIND_DK(DK_MidHook2);
         BIND_DK(DK_MidUnhook);
         BIND_DK(DK_RegisterChainedMidHook);
         BIND_DK(DK_PatchBytes);
@@ -310,6 +328,15 @@ public:
         BIND_DK(DK_GetWorldCursorRay);
         BIND_DK(DK_GetWorldCursor);
         BIND_DK(DK_SetWorldCursor);
+
+        BIND_DK(DK_Game_GetLocalPlayer);
+        BIND_DK(DK_Game_IsPlayerReady);
+        BIND_DK(DK_Game_TeleportPlayer);
+        BIND_DK(DK_Overlay_RegisterCommand);
+        BIND_DK(DK_Net_SendToServer);
+        BIND_DK(DK_Net_BroadcastToClients);
+        BIND_DK(DK_Net_SyncSetVar);
+        BIND_DK(DK_Net_SyncGetVar);
 
         BIND_DK(DK_Log);
 
@@ -432,16 +459,19 @@ public:
     bool m_initialized = false;
 
     FnDK_Initialize pfn_DK_Initialize = nullptr;
+    FnDK_GetAbiVersion pfn_DK_GetAbiVersion = nullptr;
     FnDK_PatchAll pfn_DK_PatchAll = nullptr;
     FnDK_UnpatchAll pfn_DK_UnpatchAll = nullptr;
     FnDK_Resolve pfn_DK_Resolve = nullptr;
     FnDK_ResolvePattern pfn_DK_ResolvePattern = nullptr;
     FnDK_GetModuleBase pfn_DK_GetModuleBase = nullptr;
     FnDK_GetGameBuildTimestamp pfn_DK_GetGameBuildTimestamp = nullptr;
+    FnDK_Hash_Fnv1a64 pfn_DK_Hash_Fnv1a64 = nullptr;
 
     FnDK_InlineHook pfn_DK_InlineHook = nullptr;
     FnDK_Unhook pfn_DK_Unhook = nullptr;
     FnDK_MidHook pfn_DK_MidHook = nullptr;
+    FnDK_MidHook2 pfn_DK_MidHook2 = nullptr;
     FnDK_MidUnhook pfn_DK_MidUnhook = nullptr;
     FnDK_RegisterChainedMidHook pfn_DK_RegisterChainedMidHook = nullptr;
     FnDK_PatchBytes pfn_DK_PatchBytes = nullptr;
@@ -455,6 +485,15 @@ public:
     FnDK_GetWorldCursorRay pfn_DK_GetWorldCursorRay = nullptr;
     FnDK_GetWorldCursor pfn_DK_GetWorldCursor = nullptr;
     FnDK_SetWorldCursor pfn_DK_SetWorldCursor = nullptr;
+
+    FnDK_Game_GetLocalPlayer pfn_DK_Game_GetLocalPlayer = nullptr;
+    FnDK_Game_IsPlayerReady pfn_DK_Game_IsPlayerReady = nullptr;
+    FnDK_Game_TeleportPlayer pfn_DK_Game_TeleportPlayer = nullptr;
+    FnDK_Overlay_RegisterCommand pfn_DK_Overlay_RegisterCommand = nullptr;
+    FnDK_Net_SendToServer pfn_DK_Net_SendToServer = nullptr;
+    FnDK_Net_BroadcastToClients pfn_DK_Net_BroadcastToClients = nullptr;
+    FnDK_Net_SyncSetVar pfn_DK_Net_SyncSetVar = nullptr;
+    FnDK_Net_SyncGetVar pfn_DK_Net_SyncGetVar = nullptr;
 
     FnDK_Log pfn_DK_Log = nullptr;
 
@@ -680,7 +719,7 @@ inline void* InlineHook(void* target, void* detour, void** ppOriginal) {
     return nullptr;
 }
 
-inline void* MidHook(void* target, void (*cb)(void* ctx)) {
+inline void* MidHook(void* target, DK_MidHookCallback cb) {
     auto& host = PluginHost::Instance();
     if (host.Init() && host.pfn_DK_MidHook) {
         return host.pfn_DK_MidHook(target, cb);
@@ -688,7 +727,15 @@ inline void* MidHook(void* target, void (*cb)(void* ctx)) {
     return nullptr;
 }
 
-inline bool RegisterChainedMidHook(void* target, void (*cb)(void* ctx), int priority = 0, const char* name = "") {
+inline void* MidHook2(void* target, DK_MidHook2Callback cb, void* userData) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_MidHook2) {
+        return host.pfn_DK_MidHook2(target, cb, userData);
+    }
+    return nullptr;
+}
+
+inline bool RegisterChainedMidHook(void* target, DK_MidHookCallback cb, int priority = 0, const char* name = "") {
     auto& host = PluginHost::Instance();
     if (host.Init() && host.pfn_DK_RegisterChainedMidHook) {
         return host.pfn_DK_RegisterChainedMidHook(target, cb, priority, name);
