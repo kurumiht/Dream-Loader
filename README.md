@@ -13,8 +13,8 @@
     <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.9.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.9.0 Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Dream-AoE-Harvest-v1.4.0.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20v1.4.0%20(Mod)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Dream-AoE-Harvest-v1.5.0.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20v1.5.0%20(Mod)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
   </a>
   &nbsp;&nbsp;
   <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Enshrouded-v1.0.0.3-Build-1273043-SDK-Dump.zip">
@@ -34,7 +34,7 @@
 > **Separate Downloads (`Dream-Core` vs `Dream-AoE-Harvest`):**  
 > To avoid any confusion—especially if you already use or develop other mods similar to ours—the downloads are provided in two separate packages:  
 > * 📦 **`Dream-Core-v3.8.4.zip`**: The standalone core native Harmony framework engine and C-ABI plugin loader. Does not bundle gameplay mods.  
-> * 🌾 **`Dream-AoE-Harvest-v1.4.0.zip`**: The standalone dedicated AoE crop harvesting mod plugin (v1.4.0, 3.5m radius, F8 toggle), provided separately with chest/container protection so you can freely plug it into your server or client `mods/` directory.  
+> * 🌾 **`Dream-AoE-Harvest-v1.5.0.zip`**: The standalone dedicated AoE crop harvesting mod plugin (v1.4.0, 3.5m radius, F8 toggle), provided separately with chest/container protection so you can freely plug it into your server or client `mods/` directory.  
 * 📚 **`Enshrouded-v1.0.0.3-Build-1273043-SDK-Dump.zip`**: The standalone reverse engineering engine dump (12,646 classes, 38,367 fields, 72,746 functions) for Game Build 1273043, provided for mod developers building custom plugins.
 
 ---
