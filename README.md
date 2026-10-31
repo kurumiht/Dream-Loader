@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 > **Modern Native Harmony Hooking & Modding Framework for C++20 / x64 Windows**  
 > *(Zero-Assembly, Zero-RAM-Scan, Hardware Breakpoint VEH, High-Performance Keen Games Engine Hooking)*  
-> **Framework Version:** `3.8.4` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
+> **Framework Version:** `3.9.0` | **Architecture:** x64 Windows | **Target Game:** Enshrouded 1.0+
 
 ---
 
@@ -9,15 +9,15 @@
   <b>Language Switcher / สลับภาษา:</b><br>
   <a href="README.md">🇬🇧 <b>English (Default)</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Dream-Core-v3.8.4.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.8.4%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.4 Framework" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Dream-Core-v3.9.0.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.9.0%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="Download Dream-Core v3.8.4 Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Dream-AoE-Harvest-v1.4.0.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20v1.4.0%20(Mod)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Dream-AoE-Harvest-v3.9.0.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20v3.9.0%20(Mod)-blue?style=for-the-badge&logo=windows" alt="Download Dream-AoE-Harvest Mod" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.8.4/Enshrouded-v1.0.0.3-Build-1273043-SDK-Dump.zip">
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.0/Enshrouded-v1.0.0.3-Build-1273043-SDK-Dump.zip">
     <img src="https://img.shields.io/badge/Download-Enshrouded%20SDK%20Dump%20(Build%201273043)-orange?style=for-the-badge&logo=code" alt="Download Enshrouded SDK Dump" />
   </a>
 </p>
