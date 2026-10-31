@@ -4,11 +4,16 @@
 
 We actively provide security updates and patches for the current major release line of **dreamkurumiHT** / **Dream-Loader**.
 
-| Version Line | Supported          | Status                                                 |
-| :---         | :---:              | :---                                                   |
-| **v3.9.x**   | :white_check_mark: | **Current Active Release** (Full Security & Feature Support) |
-| **v3.8.x**   | :warning:          | Maintenance Mode (Critical Security Hotfixes Only)     |
-| **< v3.8.0** | :x:                | End of Life (Unsupported — please upgrade to v3.9.x)   |
+| Version Line | Supported          | Status                                                                  |
+| :---         | :---:              | :---                                                                    |
+| **v3.9.x**   | :white_check_mark: | **Current Active Release** (Recommended / แนะนำให้ใช้ตัวนี้เป็นหลัก)       |
+| **v3.8.x**   | :warning:          | Maintenance (Limited / ไม่รับประกันว่าจะแก้ให้ตัวเก่าไหม)                 |
+| **< v3.8.0** | :x:                | End of Life (Unsupported / ไม่รองรับแล้ว)                               |
+
+> [!NOTE]
+> ### 💬 Author's Recommendation (คำแนะนำจากผู้พัฒนา)
+> **(TH)** อันที่จริงแล้วฉันแนะนำให้ใช้งานตัวล่าสุด (**v3.9.x**) จะดีกว่าครับ เพราะฉันก็ยังไม่ค่อยแน่ใจว่าจะกลับไปแก้หรือทำแพตช์ให้ตัวเก่าไหม การอัปเดตมาใช้ตัวล่าสุดจึงเสถียรและปลอดภัยที่สุดครับ  
+> **(EN)** In reality, I strongly recommend using the latest release (**v3.9.x**) instead. As an independent developer, I cannot guarantee whether I will backport fixes or patch older versions, so staying on the latest version is always the best choice.
 
 ---
 
