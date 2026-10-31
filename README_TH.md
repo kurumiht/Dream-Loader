@@ -98,10 +98,19 @@
     - รองรับการที่หลาย Mod เข้ามา Hook ฟังก์ชันเดียวกันในเกมโดยไม่ชนกัน
     - กำหนด Priority ได้ 6 ระดับ (`First`, `Highest`, `High`, `Normal`, `Low`, `Lowest`, `Last`)
     - รองรับ Prefix Skip และ Postfix Result Mutation ในระดับ Pipeline
-18. **Anti-Crash Mod Sandbox Shield (`DreamCrashGuard`)**
-    - ครอบคลุม Callback ของ Mod ด้วย Vectored Exception Handling + Windows TEB TLS
-    - ดักจับเหตุการณ์ Access Violation (`0xC0000005`) หรือ Null-Pointer Dereference **โดยไม่ปล่อยให้เกมหลุด (Crash to Desktop)**
-    - บันทึกชื่อ Mod ที่มีปัญหา, Faulting RIP Address แล้ว Resume เกมให้รันต่อได้อย่างปลอดภัย 100%
+18. **Anti-Crash Mod Sandbox Shield (`DreamCrashGuard` v3.9.0 Hardened Edition)**
+    - ครอบคลุม Callback ของ Mod ด้วย Vectored Exception Handling + `RtlCaptureContext` / `NtContinue` (ตัดขาดจาก CRT `longjmp` 100% ปลอดภัยทั้งโหมด `-O0` และ `-O2`)
+    - **Kernel-Safe Memory Probing:** ตรวจสอบขอบเขตแอดเดรสและพื้นที่ขยายสแตกของเธรด (`TEB->StackLimit` vs `TEB->DeallocationStack`) ล่วงหน้าก่อนแตะหน่วยความจำ พร้อมปล่อยผ่าน `STATUS_GUARD_PAGE_VIOLATION (0x80000001)` ใน VEH เพื่อรักษาความสมบูรณ์ของระบบ Kernel Stack Auto-Growth และไม่ลบล้างบิต `PAGE_GUARD`
+    - ดักจับเหตุการณ์ Access Violation (`0xC0000005`), #GP, หรือ Null-Pointer Dereference **โดยไม่ปล่อยให้เกมหลุด (Crash to Desktop)**
+    - **Zero-Allocation & Zero-Lock VEH:** บันทึกรีจิสเตอร์ (`RAX-R11`, `RSP`, `RBP`) และถอดรหัส Stack Backtrace สูงสุด 12 เฟรมภายใต้ขอบเขต Stack TEB แบบเรียลไทม์
+    - **Bounded Heuristic Leaf Unwind:** สแกนสูงสุด 8 ช่องบน Stack ด้วย `IsLikelyReturnAddress()` (ตรวจไบต์ CALL และขอบเขต PE Image) ช่วยให้ Unwind ตรงจุดแม้แครชกลาง Leaf / Trampoline
+    - **Debugger Pass-Through:** รองรับโหมด `SetDebuggerPassThrough()` / `DREAM_DEBUG_PASSTHROUGH=1` เพื่อให้ Visual Studio / x64dbg จับ Crash ได้ตรงๆ โดยยังคงป้องกัน `DreamMemory` Probes อย่างปลอดภัย
+    - **Advanced Root Cause Diagnostics:** วิเคราะห์หาสาเหตุแครชอัตโนมัติ (Null Pointer, Unaligned SSE #GP, Use-After-Free `0xDDDDDDDD` / `0xFEEEFEEE`, Uninitialized Memory `0xCDCDCDCD` / `0xCCCCCCCC`)
+    - **Mod Call Site Detection:** หากเกมแครชใน `enshrouded.exe` ระบบจะสแกนหาบรรทัดใน `.dll` ของ Mod ที่เป็นตัวเรียกฟังก์ชันเกม พร้อมแนะนำคำสั่ง `addr2line -f -C -e Mod.dll <Address>` ให้ทันที
+    - **Circuit Breaker & Hot-Reload Reset:** ตัดการทำงานของ Mod อัตโนมัติเมื่อแครชซ้ำ 5 ครั้ง พร้อมรีเซ็ตตัวนับอัตโนมัติทันทีเมื่อตรวจพบการ Shadow Hot-Reload
+    - **In-Game Toast Alert:** เชื่อมต่อกับ `DreamToast` แจ้งเตือนแบนเนอร์สีแดงมุมจอบนหน้าจอเกมสดๆ โดยอัตโนมัติ (ปิดการทำงานอัตโนมัติเมื่อรันบน Headless Server)
+    - **Zero-Freeze Epilogue-Safe Hot-Reload Draining (`DreamPluginGate`):** ประตูควบคุมการทำงานของปลั๊กอินที่เป็นเจ้าของโดย Host Framework ใช้การยิงสัญญาณ IPI ระดับฮาร์ดแวร์ด้วย `FlushProcessWriteBuffers()` เพื่อถ่ายโอนการทำงานให้กลับสู่เอนจินหลักอย่างปลอดภัยก่อน `FreeLibrary`
+    - **GameNetworkingSockets Boundary Demultiplexing (`DreamGnsTransportHook`):** ดักกรองข้อมูล Mod RPC (`0xD7EA0002` / `0xD7EA0001`) ที่ระดับเครือข่ายก่อนส่งมอบให้ `keen::net` ป้องกันปัญหา Bitstream Offset Desynchronization อย่างเด็ดขาด
 19. **AVX2 & SSE Vectorized Pattern Scanner (`DreamScanner`)**
     - สแกน Byte Pattern ด้วยคำสั่ง SIMD (`_mm256_cmpeq_epi8`) คราวละ 32 bytes ต่อ 1 Clock Cycle
     - เร็วกว่าลูปสแกนปกติถึง 20 เท่า ค้นหาไบนารีเกมขนาด 150MB+ ได้ภายในไม่กี่มิลลิวินาที
@@ -232,6 +241,9 @@
     - หน้าต่าง HUD แสดงสถานะความสมบูรณ์ของ Hook, Latency แต่ละเฟรม, การจัดสรรหน่วยความจำ และสถานะของม็อดทุกตัวในเกมแบบเรียลไทม์
 56. **Custom Network RPC Multiplexer (`DreamRpcMultiplexer`)**
     - ระบบส่งข้อความ RPC แบบ Binary Framed สองทิศทางระหว่าง Client และ Dedicated Server พร้อม Serialization และตัวกระจาย Handler อัตโนมัติ
+    - **Dual-Magic Protocol Framing:** รองรับ v2 28-byte header (`0xD7EA0002`) พร้อม 32-bit Sequence ID (`seqId`) ควบคู่กับ legacy v1 24-byte (`0xD7EA0001`)
+    - **Sliding-Window Replay Defense:** 64-bit sliding sequence bitmap กรองแพ็กเก็ตซ้ำและแพ็กเก็ตเก่าข้าม Socket โดยไม่ต้องจัดสรรฮีป
+    - **Token Bucket Rate Limiting:** เติมโทเค็น 120 req/s พร้อมขีดจำกัด Burst และระบบ Default DENY ป้องกันการแอบอ้างสิทธิ์จาก Client
 57. **Embedded Atomic Key-Value Storage (`DreamStore`)**
     - ระบบฐานข้อมูล Key-Value ขนาดเล็กในตัว ปลอดภัยระดับ ACID บันทึกข้อมูลลงดิสก์แบบ Atomic ป้องกันข้อมูลเสียหายเมื่อเกมปิดกะทันหัน
 58. **Modern C++ Lua Binding Engine (`DreamLua` Extensions)**

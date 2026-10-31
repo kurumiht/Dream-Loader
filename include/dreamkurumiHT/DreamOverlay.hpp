@@ -21,6 +21,7 @@
 #include "DreamLiveConfig.hpp"
 #include "DreamPlayerRegistry.hpp"
 #include "DreamBackup.hpp"
+#include "DreamDiagnosticOverlay.hpp"
 #include <psapi.h>
 
 namespace dreamkurumi {
@@ -187,7 +188,8 @@ public:
         if (DreamServerGuard::IsDedicatedServer()) return;
 
         static bool s_menuKeyPressed = false;
-        if (GetAsyncKeyState(m_menuKey) & 0x8000) {
+        if (DreamDiagnosticOverlay::Instance().IsEnabled() &&
+            (GetAsyncKeyState(DreamDiagnosticOverlay::Instance().GetToggleKey()) & 0x8000)) {
             if (!s_menuKeyPressed) {
                 ToggleMenu();
                 s_menuKeyPressed = true;
@@ -277,6 +279,19 @@ public:
             }
         });
 
+        RegisterCommand("diag", [](const std::string& args) {
+            if (args == "toggle") {
+                DreamDiagnosticOverlay::Instance().Toggle();
+                printf("\033[96m[DiagnosticOverlay] Overlay toggled (Now: %s)\033[0m\n",
+                       DreamDiagnosticOverlay::Instance().IsVisible() ? "VISIBLE" : "HIDDEN");
+            } else {
+                std::string rep = DreamDiagnosticOverlay::Instance().GenerateDiagnosticReport();
+                printf("\n%s\n", rep.c_str());
+            }
+            fflush(stdout);
+        });
+        RegisterCommand("diagnostic", [this](const std::string& args) { ExecuteCommand("diag " + args); });
+
         RegisterCommand("help", [this](const std::string& args) {
             if (!args.empty()) {
                 std::string target = args;
@@ -334,11 +349,12 @@ public:
             printf("  tail [N] (alias: t)  - View last N logs directly in console (e.g. tail 50)\n");
             printf("  grep <pattern> [N]   - Search recent logs in memory for keyword\n");
             printf("  verbose <ch> <0-3>   - Set channel verbosity level [0=Off..3=Trace] (alias: v)\n");
-            printf("  get [key]            - Read live mod settings (e.g. get aoe.radius or get all)\n");
-            printf("  set <key> <val>      - Tweak live settings in memory (e.g. set aoe.radius 4.5)\n");
+            printf("  get [key]            - Read live framework settings (e.g. get engine.loglevel or get all)\n");
+            printf("  set <key> <val>      - Tweak live settings in memory (e.g. set engine.loglevel 2)\n");
             printf("  players              - List active players and entity IDs\n");
             printf("  say / broadcast <msg>- Broadcast an announcement banner to all connected players\n");
             printf("  kick <id|name> [msg] - Kick a player from the server with optional reason\n");
+            printf("  diag [toggle]        - Display active hook health table, FPS, and memory metrics\n");
             printf("  snapshot             - Export comprehensive diagnostic report file\n");
             printf("  dump <addr> [len]    - Hex dump memory buffer safely (e.g. dump 0x7FF... 64)\n");
             printf("  sig <pattern>        - AVX2/SSE SIMD scan IDA pattern in game executable\n");
@@ -804,7 +820,7 @@ public:
                 printf("  No recent log entries in memory.\n");
             } else {
                 for (const auto& entry : logs) {
-                    printf("%s", entry.rawFormatted.c_str());
+                    DreamLog::PrintFormattedEntry(entry);
                 }
             }
             printf("\033[96m==============================================================\033[0m\n\n");
@@ -834,7 +850,7 @@ public:
                 printf("  No matching lines found in memory.\n");
             } else {
                 for (const auto& m : matches) {
-                    printf("%s", m.rawFormatted.c_str());
+                    DreamLog::PrintFormattedEntry(m);
                 }
             }
             printf("\033[93m=================================================================\033[0m\n\n");
@@ -909,7 +925,7 @@ public:
             std::istringstream iss(args);
             std::string key, val;
             if (!(iss >> key >> val)) {
-                printf("\033[91mUsage: set <module.key> <value> (e.g. set aoe.radius 4.5)\033[0m\n");
+                printf("\033[91mUsage: set <module.key> <value> (e.g. set engine.loglevel 2)\033[0m\n");
                 return;
             }
             if (DreamConfig.Set(key, val)) {
@@ -1197,6 +1213,9 @@ public:
             for (const auto& p : DreamConfig.GetAll()) {
                 fprintf(fp, "  %-18s = %-8s (%s)\n", p.key.c_str(), p.valueStr.c_str(), p.description.c_str());
             }
+
+            std::string diagRep = DreamDiagnosticOverlay::Instance().GenerateDiagnosticReport();
+            fprintf(fp, "\n%s\n", diagRep.c_str());
 
             fprintf(fp, "\n[RECENT LOG ENTRIES]\n");
             auto recent = DreamLog::Instance().GetRecentLogs(200);

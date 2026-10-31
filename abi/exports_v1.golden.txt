@@ -1,0 +1,147 @@
+# dreamkurumiHT ABI golden file. Edit only through `check_exports.py --update` in a reviewed commit.
+# api: symbol | return | params
+api: DK_Asset_ClearAll | void | void
+api: DK_Asset_GetOverride | bool | const char*, const char*, const void**, size_t*
+api: DK_Asset_IsValidKfc4 | bool | const void*, size_t
+api: DK_Asset_RegisterLocaTag | bool | const char*, const char*
+api: DK_Asset_RegisterOverride | bool | const char*, const char*, const void*, size_t, const char*
+api: DK_Backup_Create | bool | const char*
+api: DK_ChainLoader_GetCount | size_t | void
+api: DK_ChainLoader_LoadChainedDll | bool | const char*
+api: DK_ChainLoader_ScanAndLoad | size_t | const char*
+api: DK_Config_BindBool | void | const char*, const char*, bool, const char*
+api: DK_Config_BindFloat | void | const char*, const char*, float, const char*
+api: DK_Config_BindInt | void | const char*, const char*, int, const char*
+api: DK_Config_BindString | void | const char*, const char*, const char*, const char*
+api: DK_Config_GetBool | bool | const char*, bool
+api: DK_Config_GetFloat | float | const char*, float
+api: DK_Config_GetInt | int | const char*, int
+api: DK_Config_GetString | bool | const char*, char*, uint32_t, const char*
+api: DK_Config_Reload | bool | void
+api: DK_Config_SetBool | void | const char*, bool
+api: DK_Config_SetFloat | void | const char*, float
+api: DK_Config_SetInt | void | const char*, int
+api: DK_Config_SetString | void | const char*, const char*
+api: DK_CpuSupportsAvx | bool | void
+api: DK_CrashGuard_GetDebuggerPassThrough | bool | void
+api: DK_CrashGuard_GetFaultCount | uint32_t | const char*
+api: DK_CrashGuard_IsCircuitTripped | bool | const char*
+api: DK_CrashGuard_ResetCircuit | void | const char*
+api: DK_CrashGuard_SetCircuitThreshold | void | uint32_t
+api: DK_CrashGuard_SetDebuggerPassThrough | void | bool
+api: DK_DiagnosticOverlay_IsVisible | bool | void
+api: DK_DiagnosticOverlay_RegisterHook | void | const char*, uintptr_t, const char*
+api: DK_DiagnosticOverlay_SetVisible | void | bool
+api: DK_DiagnosticOverlay_Toggle | void | void
+api: DK_Env_IsClient | bool | void
+api: DK_Env_IsDedicatedServer | bool | void
+api: DK_Env_IsWine | bool | void
+api: DK_Event_Publish | size_t | const char*, const void*, size_t
+api: DK_Event_Subscribe | uint64_t | const char*, FNPTR, void*
+api: DK_Event_Unsubscribe | bool | uint64_t
+api: DK_ExecuteProtected | bool | const char*, FNPTR, void*
+api: DK_GetEntity | void* | void*, uint32_t
+api: DK_GetEntityComponent | void* | void*, uint16_t
+api: DK_GetEntityPosition | bool | void*, float*, float*, float*
+api: DK_GetGameBuildTimestamp | uint32_t | void
+api: DK_GetModuleBase | uintptr_t | void
+api: DK_GetWorldCursor | bool | DreamWorldCursor*
+api: DK_GetWorldCursorPosition | bool | float*, float*, float*
+api: DK_GetWorldCursorRay | bool | float*, float*, float*, float*, float*, float*
+api: DK_Gns_FilterAndDemux | int | void**, int, bool
+api: DK_Hook_HasExistingHook | bool | const void*, uintptr_t*
+api: DK_Initialize | bool | const char*
+api: DK_InlineHook | void* | void*, void*, void**
+api: DK_Log | void | int, const char*
+api: DK_MidHook | void* | void*, FNPTR
+api: DK_MidUnhook | bool | void*
+api: DK_Nop | void* | void*, size_t
+api: DK_Overlay_ExecuteCommand | bool | const char*
+api: DK_Overlay_IsMenuOpen | bool | void
+api: DK_Overlay_SetMenuKey | void | int
+api: DK_Overlay_ToggleMenu | void | void
+api: DK_PatchAll | size_t | void
+api: DK_PatchBytes | void* | void*, const uint8_t*, size_t
+api: DK_Player_Broadcast | void | const char*
+api: DK_Player_GetCount | uint32_t | void
+api: DK_Player_Kick | bool | uint32_t, const char*
+api: DK_Player_OnDisconnect | void | uint32_t
+api: DK_Player_OnLogin | void | uint32_t, const char*, bool
+api: DK_PluginGate_CloseAndDrain | bool | const char*, uint32_t
+api: DK_PluginGate_GetInFlight | uint64_t | const char*
+api: DK_PluginGate_Leave | void | const char*
+api: DK_PluginGate_TryEnter | bool | const char*
+api: DK_Preset_IsDedicatedServer | bool | void
+api: DK_Preset_LoadConfig | bool | const char*
+api: DK_Preset_SaveConfig | bool | const char*
+api: DK_Preset_SetFastProduction | void | bool, float
+api: DK_Preset_SetFreeCraft | void | bool
+api: DK_Preset_SetGhostMode | void | bool
+api: DK_Preset_SetGodMode | void | bool
+api: DK_Preset_SetInfiniteDurability | void | bool
+api: DK_Preset_SetInfiniteItemSplit | void | bool
+api: DK_Preset_SetInfiniteItemUse | void | bool
+api: DK_Preset_SetInfiniteMana | void | bool
+api: DK_Preset_SetInfiniteShroud | void | bool
+api: DK_Preset_SetInfiniteStamina | void | bool
+api: DK_Preset_SetNoResourceCost | void | bool
+api: DK_Preset_SetOneShotKill | void | bool
+api: DK_Preset_SetSuperMining | void | bool, float
+api: DK_Preset_SetUnlimitedFlight | void | bool
+api: DK_Profiler_PrintReport | void | void
+api: DK_Profiler_Reset | void | void
+api: DK_Profiler_SetEnabled | void | bool
+api: DK_RegisterChainedMidHook | bool | void*, FNPTR, int, const char*
+api: DK_Resolve | void* | const char*, uintptr_t
+api: DK_ResolvePattern | void* | const char*, const char*, uintptr_t
+api: DK_RestorePatch | bool | void*
+api: DK_Rpc_AuthorizeCaller | void | uint32_t, bool
+api: DK_Rpc_PackFrame | uint32_t | uint32_t, uint32_t, uint32_t, const uint8_t*, uint32_t, uint8_t*, uint32_t
+api: DK_Rpc_SetTokenBucketParams | void | double, double
+api: DK_Scheduler_Cancel | bool | uint64_t
+api: DK_Scheduler_Enqueue | uint64_t | FNPTR, void*
+api: DK_Scheduler_RunAfter | uint64_t | uint32_t, FNPTR, void*
+api: DK_Scheduler_Tick | size_t | double
+api: DK_SetWorldCursor | void | const DreamWorldCursor*
+api: DK_ShowToast | void | const char*, float, uint32_t
+api: DK_Store_Flush | bool | const char*
+api: DK_Store_FlushAll | size_t | void
+api: DK_Store_GetBool | bool | const char*, const char*, bool
+api: DK_Store_GetFloat | double | const char*, const char*, double
+api: DK_Store_GetInt | int64_t | const char*, const char*, int64_t
+api: DK_Store_GetString | bool | const char*, const char*, char*, uint32_t, const char*
+api: DK_Store_SetBool | void | const char*, const char*, bool
+api: DK_Store_SetFloat | void | const char*, const char*, double
+api: DK_Store_SetInt | void | const char*, const char*, int64_t
+api: DK_Store_SetString | void | const char*, const char*, const char*
+api: DK_Unhook | bool | void*
+api: DK_UnpatchAll | void | void
+api: DK_Vulkan_ConfigureLayerEnvironment | bool | const char*, const char*
+api: DK_Vulkan_GenerateLayerManifest | bool | const char*, const char*, const char*, const char*
+api: DK_Watchdog_Heartbeat | void | void
+api: DK_Watchdog_RegisterThread | void | const char*
+# unlisted: exported but not part of the documented plugin header (public by accident until decided)
+unlisted: DK_Game_GetLocalPlayer | void* | void
+unlisted: DK_Game_IsPlayerReady | bool | void
+unlisted: DK_Game_SetGhostMode | void | bool
+unlisted: DK_Game_SetGodMode | void | bool
+unlisted: DK_Game_SetInfiniteStamina | void | bool
+unlisted: DK_Game_SetLocalPlayer | void | void*
+unlisted: DK_Game_TeleportPlayer | bool | float, float, float
+unlisted: DK_Harmony_PatchAll | size_t | void
+unlisted: DK_Harmony_UnpatchAll | void | void
+unlisted: DK_Hash_Fnv1a64 | uint64_t | const char*
+unlisted: DK_Net_BroadcastToClients | bool | uint64_t, uint16_t, const uint8_t*, uint32_t
+unlisted: DK_Net_SendToServer | bool | uint64_t, uint16_t, const uint8_t*, uint32_t
+unlisted: DK_Net_SyncGetVar | bool | const char*, char*, uint32_t
+unlisted: DK_Net_SyncSetVar | void | const char*, const char*
+unlisted: DK_Overlay_RegisterCommand | void | const char*, FNPTR, const char*
+unlisted: DK_Player_SetBroadcastCallback | void | FNPTR
+unlisted: DK_Player_SetKickCallback | void | FNPTR
+unlisted: DK_Policy_AllowAllFeatures | void | void
+unlisted: DK_Policy_EnforceStrictRules | void | void
+unlisted: DK_Policy_IsFeatureAllowed | bool | int
+unlisted: DK_Policy_LoadPolicy | bool | const char*
+unlisted: DK_Policy_SavePolicy | bool | const char*
+unlisted: DK_Policy_SetFeatureAllowed | void | int, bool
+unlisted: DK_SetLogCallback | void | FNPTR

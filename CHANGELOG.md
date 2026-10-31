@@ -4,6 +4,84 @@ All notable changes to the **dreamkurumiHT** Native Harmony Modding Framework wi
 
 ---
 
+## [v3.9.0] - 2026-10-31 (Kernel Memory Probe Guard, Zero-Freeze Epilogue Drain & GNS Demux)
+
+### 🛡️ Kernel-Safe Memory Probing & Guard Page Protection (`DreamMemory.hpp`, `DreamCrashGuard.hpp`, `DreamCore.hpp`)
+- **TEB Stack Guard Pre-Checking (`MemoryHelper::IsSafeToProbeAddress`):**
+  - Added zero-syscall TEB boundary checking using `__readgsqword(0x10)` (`StackLimit`) and `__readgsqword(0x1478)` (`DeallocationStack`).
+  - Probes into uncommitted thread stack expansion zones are rejected upfront before touching memory, preserving Windows Kernel automatic stack growth (`nt!MmAccessFault`).
+- **One-Shot Guard Page Protection (`STATUS_GUARD_PAGE_VIOLATION` Pass-Through):**
+  - Strictly whitelisted only `EXCEPTION_ACCESS_VIOLATION (0xC0000005)` and `EXCEPTION_IN_PAGE_ERROR (0xC0000006)` for memory probes.
+  - Automatically pass through `STATUS_GUARD_PAGE_VIOLATION (0x80000001)` and `STATUS_STACK_OVERFLOW (0xC00000FD)` in VEH to avoid permanently stripping `PAGE_GUARD` bits from PTEs.
+  - Memory probe fault addresses are validated against `[probeAddress, probeAddress + probeSize)`.
+  - Memory probe faults are disarmed without logging crash reports or tripping mod circuit breakers.
+
+### 🔄 Zero-Freeze Epilogue-Safe Hot-Reload Draining (`DreamPluginGate.hpp`)
+- **Host-Owned Execution Gate (`PluginExecutionGate`):**
+  - Solves the function epilogue (`RET`) race window on DLL unload by having the host framework own entry (`TryEnter()`) and exit (`Leave()`).
+  - Guarantees execution has cleanly returned to `dreamkurumiHT.dll` `.text` before `FreeLibrary` is ever called.
+- **Asymmetric IPI Memory Barrier (`FlushProcessWriteBuffers`):**
+  - Broadcasts Inter-Processor Interrupts (IPI) via `FlushProcessWriteBuffers()` to synchronize write buffers across all CPU cores in 3-5 µs without thread deadlocks.
+- **Quarantine Module Safe Fallback (`PluginGateRegistry`):**
+  - Modules that fail to drain within the timeout budget are quarantined rather than unmapped, preventing access violation crashes.
+
+### 🌐 SteamNetworkingSockets Boundary Demultiplexing (`DreamGnsTransportHook.hpp`)
+- **Out-of-Band Mod RPC Routing:**
+  - Demultiplexes `0xD7EA0002` (and `0xD7EA0001`) RPC datagrams directly at the `ISteamNetworkingSockets::ReceiveMessagesOnConnection` boundary before `keen::net` reads them.
+  - Eliminates bitstream offset drift and deserialization desync inside Keen Holistic Engine's `PacketWriter`/`PacketReader`.
+  - Authenticates caller connection via `msg->m_conn` (`trustedSenderId`), calls `msg->Release()`, and compacts the message array in-place.
+
+---
+
+## [v3.8.5] - 2026-10-30 (Kernel Hardening & Diagnostics Overhaul)
+
+### 🛡️ Kernel-Level CrashGuard & VEH Overhaul (`DreamCrashGuard.hpp`)
+- **Direct Kernel Context Restoration (Zero CRT `setjmp`/`longjmp`):**
+  - Completely replaced CRT `setjmp`/`longjmp` with direct `RtlCaptureContext` + memory compiler barrier on entry.
+  - Exception recovery executes via direct `NtContinue` (`EXCEPTION_CONTINUE_EXECUTION`) on a clean stack.
+- **AVX/AVX2 State Sanitization:**
+  - Integrated `_mm256_zeroupper()` on landing pad post-fault to clear dirty upper 128-bit YMM state, eliminating AVX-to-SSE transition penalties.
+  - Sanitized MXCSR sticky exception flags (bits 0..5) across both x64 `CONTEXT` slots (`c->MxCsr` and `c->FltSave.MxCsr`).
+- **Hardware Breakpoint Preservation:**
+  - Preserved active hardware breakpoints (`Dr0..Dr3, Dr7`) and forced `c->ContextFlags |= CONTEXT_DEBUG_REGISTERS` ensuring hardware debug registers are committed by the Windows kernel.
+- **Zero-Syscall in VEH:**
+  - Eliminated `VirtualQuery` from VEH exception path; RIP validity is verified from exception record arguments (`isBadRip`).
+- **Diagnostic Log Overhaul:**
+  - Integrated HDE64 opcode decoding and mnemonic hints (MOV, CALL, JMP, CMP, etc.).
+  - Added "Mod Call Site" detection: when crash occurs inside `enshrouded.exe`, callstack is scanned to find the initiating mod frame.
+  - Added Debug Heap pattern recognition (`0xCDCDCDCD`, `0xDDDDDDDD`, `0xFEEEFEEE`, `0xCCCCCCCC`, `0xBAADF00D`).
+  - Stack top peek (top 4 QWORDs on `[rsp]`) and full register dump (`RAX-R11`, `RSP`, `RBP`).
+- **Generation-Tagged Lock-Free Circuit Breaker:**
+  - Packed `[32-bit Generation | 32-bit Fault Counter]` in atomic `uint64_t`.
+  - Added automatic circuit breaker reset on shadow-copy hot-reload (`DreamWatcher`).
+- **In-Game Toast Notifications:**
+  - Wired `DreamToast` to notify player on mod crash or circuit trip (auto-suppressed on headless dedicated servers).
+
+### ⚡ Network & RPC Enhancements (`DreamRpcMultiplexer.hpp`)
+- **Token Bucket Rate Limiting:**
+  - Upgraded rate limiting to a Token Bucket algorithm (120 req/s refill rate with configurable burst capacity).
+  - Sliding window 64-bit sequence bitmap for replay attack filtering.
+
+### ⚙️ Full Configuration & Subsystem Synchronization (`DreamLiveConfig` & `dllmain.cpp`)
+- **Automated Startup Config Reloading:**
+  - Wired `DreamLiveConfig::Instance().ReloadFromFiles()` to execute on framework boot in `dllmain.cpp`.
+  - Parsed and synchronized all sections from `config.toml` (`[General]`, `[CrashGuard]`, `[Network.Rpc]`, `[Watchdog]`, `[Backup]`).
+- **Dedicated Server Background Scheduler Ticker:**
+  - Added `DreamScheduler::StartDedicatedServerTicker(15)` on headless servers so delayed tasks (`RunAfter`), intervals, and coroutines tick without a Vulkan swapchain.
+- **Graceful Storage & Watchdog Shutdown:**
+  - Explicitly invoked `DreamStore::FlushAll()`, `DreamScheduler::StopDedicatedServerTicker()`, and `DreamWatchdog::Stop()` during DLL unload.
+- **Plugin C-ABI Dynamic Export Parity (`dreamkurumiHT_plugin.h` & `DreamCExport.hpp`):**
+  - Exposed `DK_CrashGuard_*` (reset circuit, trip query, debugger pass-through).
+  - Exposed `DK_Store_*` (atomic String, Int64, Float, Bool, and manual flush).
+  - Exposed `DK_Rpc_*` (frame packer V2, token bucket configuration, caller authorization).
+  - Exposed `DK_DiagnosticOverlay_*` (HUD toggle, visibility query, hook health registry).
+- **Diagnostics Command & Snapshot Integration (`DreamOverlay.hpp`):**
+  - Added in-game console command `diag [toggle]` and appended hook health status to `snapshot` reports.
+- **Verification:**
+  - Expanded unit test suite from 74 to **77 tests** (`Test 75: Dedicated Server Ticker`, `Test 76: LiveConfig Sync`, `Test 77: DreamStore & CrashGuard Controls`). All 77 tests passing (100% green).
+
+---
+
 ## [v3.8.4] - 2026-10-30 (Bugfix Release - แก้ไขบัค)
 
 ### 🐛 Bug Fixes & Architecture Hardening (แก้ไขบัคและปรับปรุงความเสถียร)

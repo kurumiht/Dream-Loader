@@ -15,7 +15,7 @@
 namespace dreamkurumi {
 
 // ============================================================================
-// Extended SIMD / AVX2 CPU Register Context for Plugins (v3.8.4)
+// Extended SIMD / AVX2 CPU Register Context for Plugins (v3.8.5)
 // ============================================================================
 #pragma pack(push, 1)
 struct DreamYmmRegister {
@@ -145,6 +145,48 @@ typedef uint64_t (*FnDK_Scheduler_RunAfter)(uint32_t delayMs, void (*fn)(void*),
 typedef bool (*FnDK_Scheduler_Cancel)(uint64_t taskId);
 typedef size_t (*FnDK_Scheduler_Tick)(double maxTimeBudgetMs);
 typedef bool (*FnDK_CpuSupportsAvx)();
+
+// CrashGuard Sandbox Controls (v3.8.5)
+typedef void (*FnDK_CrashGuard_SetDebuggerPassThrough)(bool enable);
+typedef bool (*FnDK_CrashGuard_GetDebuggerPassThrough)();
+typedef void (*FnDK_CrashGuard_ResetCircuit)(const char* modName);
+typedef bool (*FnDK_CrashGuard_IsCircuitTripped)(const char* modName);
+typedef uint32_t (*FnDK_CrashGuard_GetFaultCount)(const char* modName);
+typedef void (*FnDK_CrashGuard_SetCircuitThreshold)(uint32_t threshold);
+
+// DreamStore Persistent Storage (v3.8.5)
+typedef void (*FnDK_Store_SetString)(const char* ns, const char* key, const char* val);
+typedef bool (*FnDK_Store_GetString)(const char* ns, const char* key, char* outBuffer, uint32_t outSize, const char* fallback);
+typedef void (*FnDK_Store_SetInt)(const char* ns, const char* key, int64_t val);
+typedef int64_t (*FnDK_Store_GetInt)(const char* ns, const char* key, int64_t fallback);
+typedef void (*FnDK_Store_SetFloat)(const char* ns, const char* key, double val);
+typedef double (*FnDK_Store_GetFloat)(const char* ns, const char* key, double fallback);
+typedef void (*FnDK_Store_SetBool)(const char* ns, const char* key, bool val);
+typedef bool (*FnDK_Store_GetBool)(const char* ns, const char* key, bool fallback);
+typedef bool (*FnDK_Store_Flush)(const char* ns);
+typedef size_t (*FnDK_Store_FlushAll)();
+
+// Network RPC Multiplexer V2 (v3.8.5)
+typedef uint32_t (*FnDK_Rpc_PackFrame)(uint32_t callerId, uint32_t targetId, uint32_t rpcHash,
+                                       const uint8_t* payload, uint32_t payloadSize,
+                                       uint8_t* outBuffer, uint32_t maxBufferSize);
+typedef void (*FnDK_Rpc_AuthorizeCaller)(uint32_t callerId, bool allowed);
+typedef void (*FnDK_Rpc_SetTokenBucketParams)(double refillRatePerSec, double maxBurstCapacity);
+
+// Diagnostic Overlay Controls (v3.8.5)
+typedef void (*FnDK_DiagnosticOverlay_Toggle)();
+typedef void (*FnDK_DiagnosticOverlay_SetVisible)(bool visible);
+typedef bool (*FnDK_DiagnosticOverlay_IsVisible)();
+typedef void (*FnDK_DiagnosticOverlay_RegisterHook)(const char* name, uintptr_t targetAddress, const char* type);
+
+// Plugin Gate & Epilogue-Safe Draining (v3.9.0)
+typedef bool (*FnDK_PluginGate_TryEnter)(const char* modName);
+typedef void (*FnDK_PluginGate_Leave)(const char* modName);
+typedef bool (*FnDK_PluginGate_CloseAndDrain)(const char* modName, uint32_t timeoutMs);
+typedef uint64_t (*FnDK_PluginGate_GetInFlight)(const char* modName);
+
+// GNS Transport Demultiplexing (v3.9.0)
+typedef int (*FnDK_Gns_FilterAndDemux)(void** ppOutMessages, int numMessages, bool isServerSide);
 
 
 typedef void (*FnDK_Preset_SetGodMode)(bool enable);
@@ -328,6 +370,39 @@ public:
         BIND_DK(DK_Config_SetBool);
         BIND_DK(DK_Config_GetString);
         BIND_DK(DK_Config_SetString);
+
+        BIND_DK(DK_CrashGuard_SetDebuggerPassThrough);
+        BIND_DK(DK_CrashGuard_GetDebuggerPassThrough);
+        BIND_DK(DK_CrashGuard_ResetCircuit);
+        BIND_DK(DK_CrashGuard_IsCircuitTripped);
+        BIND_DK(DK_CrashGuard_GetFaultCount);
+        BIND_DK(DK_CrashGuard_SetCircuitThreshold);
+
+        BIND_DK(DK_Store_SetString);
+        BIND_DK(DK_Store_GetString);
+        BIND_DK(DK_Store_SetInt);
+        BIND_DK(DK_Store_GetInt);
+        BIND_DK(DK_Store_SetFloat);
+        BIND_DK(DK_Store_GetFloat);
+        BIND_DK(DK_Store_SetBool);
+        BIND_DK(DK_Store_GetBool);
+        BIND_DK(DK_Store_Flush);
+        BIND_DK(DK_Store_FlushAll);
+
+        BIND_DK(DK_Rpc_PackFrame);
+        BIND_DK(DK_Rpc_AuthorizeCaller);
+        BIND_DK(DK_Rpc_SetTokenBucketParams);
+
+        BIND_DK(DK_DiagnosticOverlay_Toggle);
+        BIND_DK(DK_DiagnosticOverlay_SetVisible);
+        BIND_DK(DK_DiagnosticOverlay_IsVisible);
+        BIND_DK(DK_DiagnosticOverlay_RegisterHook);
+
+        BIND_DK(DK_PluginGate_TryEnter);
+        BIND_DK(DK_PluginGate_Leave);
+        BIND_DK(DK_PluginGate_CloseAndDrain);
+        BIND_DK(DK_PluginGate_GetInFlight);
+        BIND_DK(DK_Gns_FilterAndDemux);
         #undef BIND_DK
 
         m_initialized = true;
@@ -441,6 +516,39 @@ public:
     FnDK_Config_SetBool pfn_DK_Config_SetBool = nullptr;
     FnDK_Config_GetString pfn_DK_Config_GetString = nullptr;
     FnDK_Config_SetString pfn_DK_Config_SetString = nullptr;
+
+    FnDK_CrashGuard_SetDebuggerPassThrough pfn_DK_CrashGuard_SetDebuggerPassThrough = nullptr;
+    FnDK_CrashGuard_GetDebuggerPassThrough pfn_DK_CrashGuard_GetDebuggerPassThrough = nullptr;
+    FnDK_CrashGuard_ResetCircuit pfn_DK_CrashGuard_ResetCircuit = nullptr;
+    FnDK_CrashGuard_IsCircuitTripped pfn_DK_CrashGuard_IsCircuitTripped = nullptr;
+    FnDK_CrashGuard_GetFaultCount pfn_DK_CrashGuard_GetFaultCount = nullptr;
+    FnDK_CrashGuard_SetCircuitThreshold pfn_DK_CrashGuard_SetCircuitThreshold = nullptr;
+
+    FnDK_Store_SetString pfn_DK_Store_SetString = nullptr;
+    FnDK_Store_GetString pfn_DK_Store_GetString = nullptr;
+    FnDK_Store_SetInt pfn_DK_Store_SetInt = nullptr;
+    FnDK_Store_GetInt pfn_DK_Store_GetInt = nullptr;
+    FnDK_Store_SetFloat pfn_DK_Store_SetFloat = nullptr;
+    FnDK_Store_GetFloat pfn_DK_Store_GetFloat = nullptr;
+    FnDK_Store_SetBool pfn_DK_Store_SetBool = nullptr;
+    FnDK_Store_GetBool pfn_DK_Store_GetBool = nullptr;
+    FnDK_Store_Flush pfn_DK_Store_Flush = nullptr;
+    FnDK_Store_FlushAll pfn_DK_Store_FlushAll = nullptr;
+
+    FnDK_Rpc_PackFrame pfn_DK_Rpc_PackFrame = nullptr;
+    FnDK_Rpc_AuthorizeCaller pfn_DK_Rpc_AuthorizeCaller = nullptr;
+    FnDK_Rpc_SetTokenBucketParams pfn_DK_Rpc_SetTokenBucketParams = nullptr;
+
+    FnDK_DiagnosticOverlay_Toggle pfn_DK_DiagnosticOverlay_Toggle = nullptr;
+    FnDK_DiagnosticOverlay_SetVisible pfn_DK_DiagnosticOverlay_SetVisible = nullptr;
+    FnDK_DiagnosticOverlay_IsVisible pfn_DK_DiagnosticOverlay_IsVisible = nullptr;
+    FnDK_DiagnosticOverlay_RegisterHook pfn_DK_DiagnosticOverlay_RegisterHook = nullptr;
+
+    FnDK_PluginGate_TryEnter pfn_DK_PluginGate_TryEnter = nullptr;
+    FnDK_PluginGate_Leave pfn_DK_PluginGate_Leave = nullptr;
+    FnDK_PluginGate_CloseAndDrain pfn_DK_PluginGate_CloseAndDrain = nullptr;
+    FnDK_PluginGate_GetInFlight pfn_DK_PluginGate_GetInFlight = nullptr;
+    FnDK_Gns_FilterAndDemux pfn_DK_Gns_FilterAndDemux = nullptr;
 };
 
 // Clean C++ Helpers
@@ -827,6 +935,119 @@ namespace DreamConfig {
     template <typename T>
     inline ModConfigEntry<T> Bind(const std::string& section, const std::string& key, const T& defaultValue, const std::string& description = "") {
         return ModConfigEntry<T>(section, key, defaultValue, description);
+    }
+}
+
+
+// ----------------------------------------------------------------------------
+// DreamStore Plugin C++ Helper (v3.8.5)
+// ----------------------------------------------------------------------------
+namespace DreamStore {
+    inline void SetString(const char* ns, const char* key, const std::string& val) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_SetString) {
+            host.pfn_DK_Store_SetString(ns, key, val.c_str());
+        }
+    }
+
+    inline std::string GetString(const char* ns, const char* key, const std::string& fallback = "") {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_GetString) {
+            char buf[1024] = {0};
+            if (host.pfn_DK_Store_GetString(ns, key, buf, sizeof(buf), fallback.c_str())) {
+                return std::string(buf);
+            }
+        }
+        return fallback;
+    }
+
+    inline void SetInt(const char* ns, const char* key, int64_t val) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_SetInt) {
+            host.pfn_DK_Store_SetInt(ns, key, val);
+        }
+    }
+
+    inline int64_t GetInt(const char* ns, const char* key, int64_t fallback = 0) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_GetInt) {
+            return host.pfn_DK_Store_GetInt(ns, key, fallback);
+        }
+        return fallback;
+    }
+
+    inline void SetFloat(const char* ns, const char* key, double val) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_SetFloat) {
+            host.pfn_DK_Store_SetFloat(ns, key, val);
+        }
+    }
+
+    inline double GetFloat(const char* ns, const char* key, double fallback = 0.0) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_GetFloat) {
+            return host.pfn_DK_Store_GetFloat(ns, key, fallback);
+        }
+        return fallback;
+    }
+
+    inline void SetBool(const char* ns, const char* key, bool val) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_SetBool) {
+            host.pfn_DK_Store_SetBool(ns, key, val);
+        }
+    }
+
+    inline bool GetBool(const char* ns, const char* key, bool fallback = false) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_GetBool) {
+            return host.pfn_DK_Store_GetBool(ns, key, fallback);
+        }
+        return fallback;
+    }
+
+    inline bool Flush(const char* ns) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_Flush) {
+            return host.pfn_DK_Store_Flush(ns);
+        }
+        return false;
+    }
+
+    inline size_t FlushAll() {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_Store_FlushAll) {
+            return host.pfn_DK_Store_FlushAll();
+        }
+        return 0;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// DreamCrashGuard Plugin C++ Helper (v3.8.5)
+// ----------------------------------------------------------------------------
+namespace DreamCrashGuard {
+    inline void ResetCircuit(const char* modName) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_CrashGuard_ResetCircuit) {
+            host.pfn_DK_CrashGuard_ResetCircuit(modName);
+        }
+    }
+
+    inline bool IsCircuitTripped(const char* modName) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_CrashGuard_IsCircuitTripped) {
+            return host.pfn_DK_CrashGuard_IsCircuitTripped(modName);
+        }
+        return false;
+    }
+
+    inline uint32_t GetFaultCount(const char* modName) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_CrashGuard_GetFaultCount) {
+            return host.pfn_DK_CrashGuard_GetFaultCount(modName);
+        }
+        return 0;
     }
 }
 

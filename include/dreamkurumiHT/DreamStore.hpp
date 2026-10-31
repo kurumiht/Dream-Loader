@@ -393,6 +393,32 @@ public:
         return ns;
     }
 
+    // Convenience typed accessors delegating to GetNamespace
+    void SetString(const std::string& ns, const std::string& key, const std::string& val) {
+        GetNamespace(ns)->SetString(key, val);
+    }
+    std::string GetString(const std::string& ns, const std::string& key, const std::string& fallback = "") {
+        return GetNamespace(ns)->GetString(key, fallback);
+    }
+    void SetInt(const std::string& ns, const std::string& key, int64_t val) {
+        GetNamespace(ns)->SetInt(key, val);
+    }
+    int64_t GetInt(const std::string& ns, const std::string& key, int64_t fallback = 0) {
+        return GetNamespace(ns)->GetInt(key, fallback);
+    }
+    void SetFloat(const std::string& ns, const std::string& key, double val) {
+        GetNamespace(ns)->SetDouble(key, val);
+    }
+    double GetFloat(const std::string& ns, const std::string& key, double fallback = 0.0) {
+        return GetNamespace(ns)->GetDouble(key, fallback);
+    }
+    void SetBool(const std::string& ns, const std::string& key, bool val) {
+        GetNamespace(ns)->SetBool(key, val);
+    }
+    bool GetBool(const std::string& ns, const std::string& key, bool fallback = false) {
+        return GetNamespace(ns)->GetBool(key, fallback);
+    }
+
     // Atomic disk flush for a single namespace
     bool FlushNamespace(const std::string& nsName) {
         std::shared_ptr<DreamStoreNamespace> ns;

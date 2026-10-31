@@ -90,10 +90,12 @@ public:
         if (!s_checked) {
             char path[MAX_PATH] = {0};
             if (GetModuleFileNameA(NULL, path, MAX_PATH)) {
-                std::string exeName = path;
-                std::transform(exeName.begin(), exeName.end(), exeName.begin(), ::tolower);
-                if (exeName.find("enshrouded_server") != std::string::npos ||
-                    exeName.find("server") != std::string::npos) {
+                std::string fullPath = path;
+                size_t lastSlash = fullPath.find_last_of("\\/");
+                std::string filename = (lastSlash != std::string::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
+                std::transform(filename.begin(), filename.end(), filename.begin(), ::tolower);
+                if (filename.find("enshrouded_server") != std::string::npos ||
+                    filename.find("server.exe") != std::string::npos) {
                     s_isServer = true;
                 }
             }

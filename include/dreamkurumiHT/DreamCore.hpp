@@ -17,10 +17,10 @@ namespace dreamkurumi {
 //   "-rc"      : Release candidate after in-game live verification
 //   "" (clean) : Stable production release
 // ============================================================================
-#define DREAM_FRAMEWORK_VERSION       "3.8.4"
+#define DREAM_FRAMEWORK_VERSION       "3.9.0"
 #define DREAM_FRAMEWORK_VERSION_MAJOR 3
-#define DREAM_FRAMEWORK_VERSION_MINOR 8
-#define DREAM_FRAMEWORK_VERSION_PATCH 4
+#define DREAM_FRAMEWORK_VERSION_MINOR 9
+#define DREAM_FRAMEWORK_VERSION_PATCH 0
 #define DREAM_FRAMEWORK_VERSION_TAG   ""
 
 // ============================================================================
@@ -57,10 +57,28 @@ private:
 // ============================================================================
 class MemoryHelper {
 public:
-    static bool IsValidPtr(const void* ptr) {
-        if (!ptr) return false;
-        uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
-        return (addr >= 0x10000 && addr < 0x00007FFFFFF00000ULL);
+    __forceinline static bool IsSafeToProbeAddress(const void* addr, size_t size = 8) noexcept {
+        const uintptr_t u = reinterpret_cast<uintptr_t>(addr);
+        if (u < 0x10000ULL || (u + size) > 0x00007FFFFFFFFFFFULL || (u + size) < u) {
+            return false;
+        }
+
+#if defined(_M_X64) || defined(__x86_64__)
+        const uintptr_t stackLimit   = __readgsqword(0x10);   // TEB->NtTib.StackLimit
+        const uintptr_t deallocStack = __readgsqword(0x1478); // TEB->DeallocationStack
+
+        // Reject if target address overlaps the thread stack's uncommitted expansion zone!
+        if (deallocStack != 0 && stackLimit != 0 && deallocStack < stackLimit) {
+            if (u >= deallocStack && u < stackLimit) [[unlikely]] {
+                return false;
+            }
+        }
+#endif
+        return true;
+    }
+
+    __forceinline static bool IsValidPtr(const void* ptr, size_t size = 8) noexcept {
+        return IsSafeToProbeAddress(ptr, size);
     }
 
     static void* AllocateNearTarget(void* target, size_t size = 4096) {

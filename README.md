@@ -108,10 +108,19 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
 17. **Multi-Mod Hook Chain & Priority Pipeline (`DreamPipeline`)**
     - Enables multiple independent mods to hook the same game function without conflict.
     - Supports 6 priority tiers (`First`, `Highest`, `High`, `Normal`, `Low`, `Lowest`, `Last`).
-18. **Anti-Crash Mod Sandbox Shield (`DreamCrashGuard`)**
-    - Shields mod callbacks with Vectored Exception Handling + Windows TEB TLS.
-    - Catches Access Violations (`0xC0000005`) and Null-Pointer Dereferences without crashing to desktop.
-    - Logs the faulty mod and instruction address, resuming the host process safely.
+18. **Anti-Crash Mod Sandbox Shield (`DreamCrashGuard` v3.9.0 Hardened Edition)**
+    - Shields mod callbacks with Vectored Exception Handling + direct `RtlCaptureContext` / `NtContinue` context restoration (zero CRT `longjmp`, rock-solid across `-O0` and `-O2`).
+    - **Kernel-Safe Memory Probing:** Validates user address space boundaries and thread TEB stack expansion zones (`StackLimit` vs `DeallocationStack`) upfront. Memory probes strictly pass through `STATUS_GUARD_PAGE_VIOLATION (0x80000001)` to prevent stripping `PAGE_GUARD` bits.
+    - Catches Access Violations (`0xC0000005`), #GP, or Null-Pointer Dereferences without crashing to desktop.
+    - **Zero-Allocation & Zero-Lock VEH:** Captures all CPU registers (`RAX-R11`, `RSP`, `RBP`) and traces up to 12 stack frames bounded strictly by thread TEB limits.
+    - **Bounded Heuristic Leaf Unwind:** Scans up to 8 stack slots with IsLikelyReturnAddress() (x64 CALL opcode verification + PE image boundary checks) to accurately unwind leaf functions and trampoline stolen prologues.
+    - **Debugger Pass-Through:** Configurable SetDebuggerPassThrough() / DREAM_DEBUG_PASSTHROUGH=1 allowing attached Visual Studio / x64dbg debuggers to break on mod crashes while strictly safeguarding DreamMemory memory probes.
+    - **Advanced Root Cause Diagnostics:** Automatically identifies fault causes (Null Pointer, SSE unaligned #GP, Use-After-Free `0xDDDDDDDD` / `0xFEEEFEEE`, Uninitialized Memory `0xCDCDCDCD` / `0xCCCCCCCC`).
+    - **Mod Call Site Detection:** If the crash occurs inside the game engine (`enshrouded.exe`), automatically identifies the calling frame inside the mod DLL with `addr2line` guidance.
+    - **Circuit Breaker & Hot-Reload Reset:** Automatically quarantines broken mods after 5 consecutive crashes, and resets cleanly upon file recompilation/hot-reload.
+    - **In-Game Toast Alert:** Bridges to `DreamToast` for an instant unobtrusive on-screen red warning banner (auto-suppressed on headless servers).
+    - **Zero-Freeze Epilogue-Safe Hot-Reload Draining (`DreamPluginGate`):** Host-owned execution gate using `FlushProcessWriteBuffers()` asymmetric IPI memory barriers, preventing crashes in function epilogues (`RET`) upon module unloading.
+    - **GameNetworkingSockets Boundary Demultiplexing (`DreamGnsTransportHook`):** Intercepts mod RPC datagrams (`0xD7EA0002` / `0xD7EA0001`) out-of-band at the network transport boundary before `keen::net` reads them, preventing bitstream deserialization desync.
 19. **AVX2 & SSE Vectorized Pattern Scanner (`DreamScanner`)**
     - Scans memory using SIMD vector instructions (`_mm256_cmpeq_epi8`) at 32 bytes per clock cycle.
     - 20x faster than traditional scanning loops, traversing 150MB+ game binaries in milliseconds.
@@ -227,6 +236,9 @@ Unlike traditional shallow memory patchers, dreamkurumiHT operates directly on p
     - Real-time diagnostic HUD monitoring hook health, frame latency, memory allocation, and active mod status.
 56. **Custom Network RPC Multiplexer (`DreamRpcMultiplexer`)**
     - Binary framed bi-directional RPC messaging between Client and Dedicated Server with automatic payload serialization and handler dispatch.
+    - **Dual-Magic Protocol Framing:** Supports v2 28-byte header (`0xD7EA0002`) with explicit 32-bit sequence ID alongside backward-compatible legacy v1 24-byte framing (`0xD7EA0001`).
+    - **Sliding-Window Replay Defense:** 64-bit sliding sequence bitmap for zero-allocation replay and duplicate packet filtering across socket hops.
+    - **Token Bucket Rate Limiting:** 120 req/s refill rate with configurable burst token capacity and strict default DENY validator for remote callers.
 57. **Embedded Atomic Key-Value Storage (`DreamStore`)**
     - Lightweight ACID-compliant atomic key-value persistence engine with atomic disk flush and typed getters/setters.
 58. **Modern C++ Lua Binding Engine (`DreamLua` Extensions)**

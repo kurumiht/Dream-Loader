@@ -21,11 +21,11 @@ public:
     // Safe memory reading with SEH / CrashGuard protection against Bad Pointers
     template <typename T>
     static T Read(const void* address, T fallback = T{}) {
-        if (!MemoryHelper::IsValidPtr(address)) return fallback;
+        if (!MemoryHelper::IsSafeToProbeAddress(address, sizeof(T))) return fallback;
         T result = fallback;
         DreamCrashGuard::ExecuteSafely("MemoryRead", [&]() {
             result = *reinterpret_cast<const T*>(address);
-        });
+        }, reinterpret_cast<uintptr_t>(address), sizeof(T));
         return result;
     }
 
@@ -33,20 +33,26 @@ public:
     // Ensures two identical consecutive reads without torn values from background writer threads.
     static bool ReadStable(const void* src, void* dst, size_t n /* <= 64 */) {
         if (!src || !dst || n == 0 || n > 64) return false;
-        if (!MemoryHelper::IsValidPtr(src)) return false;
+        if (!MemoryHelper::IsSafeToProbeAddress(src, n)) return false;
         alignas(16) char tmp[64];
-        for (int i = 0; i < 3; ++i) {
-            std::memcpy(dst, src, n);
-            std::memcpy(tmp, src, n);
-            if (!std::memcmp(dst, tmp, n)) return true; // Two identical reads: consistent & not torn
-        }
-        return false; // Caller keeps last known good snapshot
+        bool ok = false;
+        DreamCrashGuard::ExecuteSafely("MemoryRead", [&]() {
+            for (int i = 0; i < 3; ++i) {
+                std::memcpy(dst, src, n);
+                std::memcpy(tmp, src, n);
+                if (!std::memcmp(dst, tmp, n)) {
+                    ok = true;
+                    return;
+                }
+            }
+        }, reinterpret_cast<uintptr_t>(src), n);
+        return ok;
     }
 
     // Safe memory writing with smart protection query (avoids syscall if already writable)
     template <typename T>
     static bool Write(void* address, const T& value) {
-        if (!MemoryHelper::IsValidPtr(address)) return false;
+        if (!MemoryHelper::IsSafeToProbeAddress(address, sizeof(T))) return false;
         bool ok = false;
         DreamCrashGuard::ExecuteSafely("MemoryWrite", [&]() {
             MEMORY_BASIC_INFORMATION mbi{};
@@ -72,7 +78,7 @@ public:
                     ok = true;
                 }
             }
-        });
+        }, reinterpret_cast<uintptr_t>(address), sizeof(T));
         return ok;
     }
 
@@ -80,11 +86,11 @@ public:
     // Example: ReadChain<float>(pPlayer, { 0x18, 0x30, 0x48 }, 100.0f)
     template <typename T>
     static T ReadChain(const void* baseAddress, const std::vector<uintptr_t>& offsets, T fallback = T{}) {
-        if (!MemoryHelper::IsValidPtr(baseAddress)) return fallback;
+        if (!MemoryHelper::IsSafeToProbeAddress(baseAddress, sizeof(uintptr_t))) return fallback;
         uintptr_t current = reinterpret_cast<uintptr_t>(baseAddress);
 
         for (size_t i = 0; i < offsets.size(); ++i) {
-            if (!MemoryHelper::IsValidPtr(reinterpret_cast<const void*>(current))) {
+            if (!MemoryHelper::IsSafeToProbeAddress(reinterpret_cast<const void*>(current), sizeof(uintptr_t))) {
                 return fallback;
             }
             if (i == offsets.size() - 1) {
@@ -100,11 +106,11 @@ public:
     // Multi-level Pointer Chain Write: base -> +off1 -> +off2 -> [target] = value
     template <typename T>
     static bool WriteChain(void* baseAddress, const std::vector<uintptr_t>& offsets, const T& value) {
-        if (!MemoryHelper::IsValidPtr(baseAddress) || offsets.empty()) return false;
+        if (!MemoryHelper::IsSafeToProbeAddress(baseAddress, sizeof(uintptr_t)) || offsets.empty()) return false;
         uintptr_t current = reinterpret_cast<uintptr_t>(baseAddress);
 
         for (size_t i = 0; i < offsets.size() - 1; ++i) {
-            if (!MemoryHelper::IsValidPtr(reinterpret_cast<const void*>(current))) return false;
+            if (!MemoryHelper::IsSafeToProbeAddress(reinterpret_cast<const void*>(current), sizeof(uintptr_t))) return false;
             current = Read<uintptr_t>(reinterpret_cast<const void*>(current + offsets[i]), 0);
             if (current == 0) return false;
         }

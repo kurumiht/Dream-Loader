@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# dreamkurumiHT pre-commit guard.
+#
+#   staged mode (git hook):   scripts/pre-commit            checks what is staged, scans only ADDED lines
+#   full mode (CI):           scripts/pre-commit --all      checks every tracked file (catches `--no-verify`)
+#
+# Blocks:
+#   1. executable images by magic bytes (PE "MZ", ELF, Mach-O) no matter what the file is called
+#   2. forbidden extensions (binaries, dumps, game content, signing keys)
+#   3. files larger than PRECOMMIT_MAX_KB (default 1024)
+#   4. private paths in text (C:\Users\<name>, /home/<name>, SteamLibrary, file:///C:/...) and your own  # precommit-allow
+#      regexes from .precommit-private-patterns (one ERE per line; put your Windows user name there)
+#   5. obvious secrets (private keys, GitHub tokens, AWS key ids)
+#
+# Overrides (use sparingly, they are reviewed in PRs):
+#   .precommit-allow   one path per line (exact match) allowed to be big / binary-looking
+#   inline marker      add   precommit-allow   on a text line to let that line contain a path-like string
+#
+# Needs bash >= 4 (Git for Windows ships it).
+
+set -u
+MAX_KB="${PRECOMMIT_MAX_KB:-1024}"
+MODE=staged
+[ "${1:-}" = "--all" ] && MODE=all
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 2
+cd "$ROOT" || exit 2
+
+BAD_EXT_RE='\.(dll|exe|sys|so|dylib|pdb|obj|o|lib|a|exp|bin|dmp|mdmp|kfc|kfc4|pak|dds|ktx2?|pfx|p12|pem|key|snk|cer|crt)$'
+PRIVATE_RE='([A-Za-z]:[\\/]+Users[\\/]+[^\\/ "<>|]+|/Users/[A-Za-z0-9._-]+/|/home/[A-Za-z0-9._-]+/|SteamLibrary|steamapps[\\/]common|file:///[A-Za-z]:)'
+SECRET_RE='(-----BEGIN [A-Z ]*PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{50,}|AKIA[0-9A-Z]{16})'
+
+failures=0
+fail() { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; failures=$((failures + 1)); }
+
+declare -A ALLOW=()
+if [ -f .precommit-allow ]; then
+  while IFS= read -r line; do
+    line="${line%%#*}"; line="$(printf '%s' "$line" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+    [ -n "$line" ] && ALLOW["$line"]=1
+  done < .precommit-allow
+fi
+
+EXTRA_RE=""
+if [ -f .precommit-private-patterns ]; then
+  while IFS= read -r line; do
+    line="$(printf '%s' "$line" | tr -d '\r')"
+    case "$line" in ''|\#*) continue ;; esac
+    EXTRA_RE="${EXTRA_RE:+$EXTRA_RE|}$line"
+  done < .precommit-private-patterns
+fi
+
+# list of files to inspect (NUL separated)
+if [ "$MODE" = all ]; then
+  list_cmd=(git ls-files -z)
+else
+  list_cmd=(git diff --cached --name-only --diff-filter=ACMR -z)
+fi
+
+blob_of() {  # content of $1 as it will be committed
+  if [ "$MODE" = all ]; then git show ":$1" 2>/dev/null || cat -- "$1"; else git show ":$1"; fi
+}
+
+checked=0
+while IFS= read -r -d '' f; do
+  checked=$((checked + 1))
+  [ -n "${ALLOW[$f]:-}" ] && continue
+  lower="$(printf '%s' "$f" | tr 'A-Z' 'a-z')"
+
+  # 2) extension
+  if printf '%s' "$lower" | grep -Eq "$BAD_EXT_RE"; then
+    fail "$f  - forbidden file type (binaries/dumps/game content/keys never go in git; use Releases)"
+    continue
+  fi
+
+  # 1) magic bytes
+  magic="$(blob_of "$f" | head -c 4 | od -An -tx1 | tr -d ' \n')"
+  case "$magic" in
+    4d5a*|7f454c46|cafebabe|feedface|feedfacf|cffaedfe|cefaedfe)
+      fail "$f  - executable image by content (MZ/PE, ELF or Mach-O), regardless of its name"; continue ;;
+  esac
+
+  # 3) size
+  size="$(blob_of "$f" | wc -c | tr -d ' ')"
+  if [ "$size" -gt $((MAX_KB * 1024)) ]; then
+    fail "$f  - $((size / 1024)) KB exceeds limit of ${MAX_KB} KB (add to .precommit-allow if intended)"
+    continue
+  fi
+
+  # binary-looking data (NUL bytes in the first 8 KB) is not scanned as text
+  if blob_of "$f" | head -c 8192 | LC_ALL=C grep -q -a -P '\x00' 2>/dev/null; then
+    fail "$f  - contains NUL bytes (binary data); only text belongs in this repo"
+    continue
+  fi
+
+  # 4 + 5) text scans. staged mode: added lines only; full mode: whole file
+  if [ "$MODE" = all ]; then
+    text="$(blob_of "$f" | tr -d '\r')"
+  else
+    text="$(git diff --cached -U0 --no-color -- "$f" | tr -d '\r' | grep -a '^+' | grep -a -v '^+++')"
+  fi
+  [ -z "$text" ] && continue
+  text="$(printf '%s\n' "$text" | grep -a -v 'precommit-allow')"
+  [ -z "$text" ] && continue
+
+  if hit="$(printf '%s\n' "$text" | grep -a -n -E -m1 "$PRIVATE_RE" )"; then
+    fail "$f  - private/local path: ${hit:0:110}"
+  elif [ -n "$EXTRA_RE" ] && hit="$(printf '%s\n' "$text" | grep -a -n -E -i -m1 "$EXTRA_RE")"; then
+    fail "$f  - matches .precommit-private-patterns: ${hit:0:110}"
+  fi
+  if hit="$(printf '%s\n' "$text" | grep -a -n -E -m1 "$SECRET_RE")"; then
+    fail "$f  - looks like a secret/token/private key: ${hit:0:60}..."
+  fi
+done < <("${list_cmd[@]}")
+
+if [ "$failures" -gt 0 ]; then
+  printf '\n\033[31mpre-commit: %d problem(s) in %d file(s) checked (%s mode).\033[0m\n' "$failures" "$checked" "$MODE" >&2
+  printf 'Fix them, or for a justified exception add the path to .precommit-allow. (--no-verify is caught by CI.)\n' >&2
+  exit 1
+fi
+[ "$MODE" = all ] && printf 'pre-commit --all: %d tracked files OK\n' "$checked"
+exit 0

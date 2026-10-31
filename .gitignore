@@ -1,17 +1,31 @@
-# Logs, Dumps & Crash Reports
+# Dumps, Logs & Crash Reports
+/dump/
+*.bin
+*.dmp
 *.log
 *.log.*
-*.txt
-*.dmp
+*.jsonl
+*.zip*
+*.ini
+scratch_*
+*.tsv
 dream_crash_report_*
 dream_hang_report_*
-*.cache.ini
-*.ini
+tests/*.txt
+tests/test_trace.jsonl
+tests/test_mods_store/
+tests/test_mods_store_harden/
+tests/test_patch_migration_report.json
+tests/test_rtti_candidates.json
 
 # Build Artifacts & Intermediate Files
-*.o
-*.obj
+*.dll
 *.exe
+*.pdb
+*.obj
+*.o
+*.lib
+*.a
 bin/
 obj/
 build/
@@ -24,21 +38,9 @@ Release/
 *.bak
 .vs/
 .vscode/
+.githooks/
+mods_data/
+*.dstore
 
-# Test generated artifacts
-tests/test_rtti_candidates.json
-tests/test_rtti_classes.tsv
-tests/test_trace.jsonl
-tests/test_mods_store/
-tests/test_mods_store_harden/
-tests/test_patch_migration_report.json
-*.zip-
-dreamkurumiHT.dll
-mods/Dream-Auto-Pickup/
-
-# Whitelist mod configurations
-!mods/**/config.ini
-!mods/**/native-plugin.ini
-!mods/**/config.toml
-!template/config.ini
-!template/native-plugin.ini
+# Whitelist documentation & golden baselines
+!abi/exports_v1.golden.txt

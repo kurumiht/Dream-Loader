@@ -8,8 +8,12 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include "DreamLog.hpp"
 #include "DreamToml.hpp"
 #include "DreamBackup.hpp"
+#include "DreamCrashGuard.hpp"
+#include "DreamWatchdog.hpp"
+#include "DreamRpcMultiplexer.hpp"
 
 namespace dreamkurumi {
 
@@ -320,6 +324,71 @@ public:
         for (const auto& p : enginePaths) {
             if (toml.LoadFile(p)) {
                 anyLoaded = true;
+
+                // [General]
+                if (toml.HasSection("General")) {
+                    int logLvl = toml.GetInt("General", "LogLevel", 1);
+                    DreamLog::Instance().SetMinLogLevel(static_cast<LogLevel>(logLvl));
+                    Set("engine.loglevel", std::to_string(logLvl));
+                    Set("engine.enableconsole", toml.GetBool("General", "EnableConsole", true) ? "true" : "false");
+                    Set("engine.enablehotkeys", toml.GetBool("General", "EnableHotkeys", true) ? "true" : "false");
+                    Set("engine.diagnosticskey", std::to_string(toml.GetInt("General", "DiagnosticsKey", 0x78)));
+                    Set("engine.overlaytogglekey", std::to_string(toml.GetInt("General", "OverlayToggleKey", 0x79)));
+                }
+
+                // [Diagnostics]
+                if (toml.HasSection("Diagnostics")) {
+                    bool enableHud = toml.GetBool("Diagnostics", "EnableDiagnosticsHUD", true);
+                    Set("diagnostics.enabled", enableHud ? "true" : "false");
+                    int hotkey = toml.GetInt("Diagnostics", "DiagnosticsHotkey", 0x78);
+                    Set("diagnostics.hotkey", std::to_string(hotkey));
+
+                    DreamDiagnosticOverlay::Instance().SetEnabled(enableHud);
+                    DreamDiagnosticOverlay::Instance().SetToggleKey(hotkey);
+                } else if (toml.HasSection("General")) {
+                    int diagKey = toml.GetInt("General", "DiagnosticsKey", 0x78);
+                    DreamDiagnosticOverlay::Instance().SetToggleKey(diagKey);
+                }
+
+                // [CrashGuard]
+                if (toml.HasSection("CrashGuard")) {
+                    bool enableCrashGuard = toml.GetBool("CrashGuard", "EnableCrashGuard", true);
+                    Set("crashguard.enabled", enableCrashGuard ? "true" : "false");
+
+                    int threshold = toml.GetInt("CrashGuard", "CircuitBreakerThreshold", 5);
+                    DreamCrashGuard::SetCircuitThreshold(static_cast<uint32_t>(threshold));
+                    Set("crashguard.threshold", std::to_string(threshold));
+
+                    bool toast = toml.GetBool("CrashGuard", "EnableToastAlert", true);
+                    Set("crashguard.toast", toast ? "true" : "false");
+
+                    float dur = static_cast<float>(toml.GetFloat("CrashGuard", "ToastDurationSeconds", 3.5));
+                    Set("crashguard.toastduration", FloatToString(dur));
+                }
+
+                // [Network.Rpc]
+                if (toml.HasSection("Network.Rpc")) {
+                    double refill = toml.GetFloat("Network.Rpc", "CallsPerSecondLimit", 120.0);
+                    double burst = toml.GetFloat("Network.Rpc", "MaxBurstCapacity", 120.0);
+                    DreamRpcMultiplexer::Instance().SetTokenBucketParams(refill, burst);
+                    Set("rpc.calls_per_sec", FloatToString(static_cast<float>(refill)));
+                    Set("rpc.max_burst", FloatToString(static_cast<float>(burst)));
+                }
+
+                // [Watchdog]
+                if (toml.HasSection("Watchdog")) {
+                    bool enableWatchdog = toml.GetBool("Watchdog", "EnableWatchdog", true);
+                    uint32_t hangTimeout = static_cast<uint32_t>(toml.GetInt("Watchdog", "HangTimeoutSeconds", 15));
+                    Set("watchdog.enabled", enableWatchdog ? "true" : "false");
+                    Set("watchdog.timeout", std::to_string(hangTimeout));
+                    if (enableWatchdog) {
+                        DreamWatchdog::Instance().Start(500, hangTimeout * 1000);
+                    } else {
+                        DreamWatchdog::Instance().Stop();
+                    }
+                }
+
+                // [Backup]
                 if (toml.HasSection("Backup")) {
                     bool autoBackup = toml.GetBool("Backup", "AutoBackupEnabled", true);
                     uint32_t interval = static_cast<uint32_t>(toml.GetInt("Backup", "AutoBackupIntervalMinutes", 30));
@@ -330,58 +399,33 @@ public:
             }
         }
 
-        // 2. AoE Harvest Config
-        DreamToml aoeToml;
-        if (aoeToml.LoadFile("mods/Dream-AoE-Harvest/config.toml") || aoeToml.LoadFile("Dream-AoE-Harvest/config.toml")) {
-            anyLoaded = true;
-            if (aoeToml.HasSection("AoEHarvest")) {
-                Set("aoe.enabled", aoeToml.GetBool("AoEHarvest", "Enabled", true) ? "true" : "false");
-                Set("aoe.radius", FloatToString(static_cast<float>(aoeToml.GetFloat("AoEHarvest", "Radius", 3.5))));
-                Set("aoe.samecrop", aoeToml.GetBool("AoEHarvest", "SameCropOnly", false) ? "true" : "false");
-            }
-        }
-
-        // 3. Auto-Pickup Config
-        DreamToml lootToml;
-        if (lootToml.LoadFile("mods/Dream-Auto-Pickup/config.toml") || lootToml.LoadFile("Dream-Auto-Pickup/config.toml")) {
-            anyLoaded = true;
-            if (lootToml.HasSection("AutoPickup")) {
-                Set("loot.enabled", lootToml.GetBool("AutoPickup", "Enabled", true) ? "true" : "false");
-                Set("loot.radius", FloatToString(static_cast<float>(lootToml.GetFloat("AutoPickup", "PickupRadiusMeters", 5.0))));
-                Set("loot.proximity", lootToml.GetBool("AutoPickup", "RemoveSpawnDelay", true) ? "true" : "false");
-            }
-        }
-
-        // 4. XP-Share Config
-        DreamToml xpToml;
-        if (xpToml.LoadFile("mods/XP-Share/config.toml") || xpToml.LoadFile("XP-Share/config.toml")) {
-            anyLoaded = true;
-            if (xpToml.HasSection("Config") || xpToml.HasSection("XPShare")) {
-                std::string sec = xpToml.HasSection("Config") ? "Config" : "XPShare";
-                Set("xp.enabled", xpToml.GetBool(sec, "EnableXPShare", true) ? "true" : "false");
-                Set("xp.multiplier", FloatToString(static_cast<float>(xpToml.GetFloat(sec, "ShareMultiplier", 0.35))));
-            }
-        }
-
         return anyLoaded;
     }
 
 private:
     DreamLiveConfig() {
-        // Register default known game / mod settings
-        RegisterFloat("aoe.radius", 3.5f, "AoE Crop Harvest Radius in meters");
-        RegisterBool("aoe.samecrop", true, "Harvest matching species only");
-        RegisterBool("aoe.enabled", true, "AoE Crop Harvest master switch");
+        // Engine defaults
+        RegisterInt("engine.loglevel", 1, "Log level [0=Silent, 1=Info, 2=Debug, 3=Trace]");
+        RegisterBool("engine.enableconsole", true, "Allocate console window");
+        RegisterBool("engine.enablehotkeys", true, "Enable client hotkeys");
 
-        RegisterFloat("loot.radius", 5.0f, "Auto Pickup Loot Radius in meters");
-        RegisterBool("loot.enabled", true, "Auto Pickup master switch");
-        RegisterBool("loot.proximity", true, "Instant 0s proximity pickup");
+        // CrashGuard defaults
+        RegisterBool("crashguard.enabled", true, "CrashGuard sandbox master switch");
+        RegisterInt("crashguard.threshold", 5, "Consecutive crashes before circuit trip");
+        RegisterBool("crashguard.toast", true, "Enable in-game toast notifications");
+        RegisterFloat("crashguard.toastduration", 3.5f, "Toast duration in seconds");
 
-        RegisterFloat("xp.multiplier", 0.35f, "Party EXP Share ratio");
-        RegisterBool("xp.enabled", true, "XP Share master switch");
+        // Diagnostics HUD defaults
+        RegisterBool("diagnostics.enabled", true, "Enable Diagnostics HUD");
+        RegisterInt("diagnostics.hotkey", 0x78, "Diagnostics HUD Hotkey (F9)");
 
-        RegisterBool("admin.instantcatch", true, "Instant fishing minigame catch");
-        RegisterBool("admin.enabled", true, "Admin utilities master switch");
+        // RPC defaults
+        RegisterFloat("rpc.calls_per_sec", 120.0f, "RPC rate limit per caller");
+        RegisterFloat("rpc.max_burst", 120.0f, "RPC max burst tokens");
+
+        // Watchdog defaults
+        RegisterBool("watchdog.enabled", true, "Watchdog anti-hang monitor");
+        RegisterInt("watchdog.timeout", 15, "Hang detection timeout in seconds");
     }
 
     static std::string ToLower(const std::string& s) {

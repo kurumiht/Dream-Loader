@@ -53,16 +53,9 @@
 #define DREAM_LOG_COMPILE_MAX_VERBOSITY 3
 #endif
 
-namespace dreamkurumi {
+#include "DreamRawLog.hpp"
 
-enum class LogLevel : int {
-    Debug = 0,
-    Info  = 1,
-    Warn  = 2,
-    Error = 3,
-    Fatal = 4,
-    None  = 5
-};
+namespace dreamkurumi {
 
 enum class LogChannel : uint8_t {
     Global = 0,
@@ -117,10 +110,19 @@ public:
         }
 
         if (!m_hConsole) {
-            HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
-            if (hStdOut != INVALID_HANDLE_VALUE && hStdOut != nullptr) {
-                m_hConsole = hStdOut;
+            HANDLE hOut = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                      OPEN_EXISTING, 0, nullptr);
+            if (hOut != INVALID_HANDLE_VALUE && hOut != nullptr) {
+                m_hConsole = hOut;
+                m_ownsConsoleHandles = true;
                 EnableVT(m_hConsole);
+            } else {
+                hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+                if (hOut != INVALID_HANDLE_VALUE && hOut != nullptr) {
+                    m_hConsole = hOut;
+                    EnableVT(m_hConsole);
+                }
             }
         }
 
@@ -293,28 +295,72 @@ public:
         if (GetConsoleWindow() != NULL) {
             ok = true;
         } else if (AllocConsole()) {
-            FILE* f = nullptr;
-            freopen_s(&f, "CONOUT$", "w", stdout);
-            freopen_s(&f, "CONOUT$", "w", stderr);
-            freopen_s(&f, "CONIN$", "r", stdin);
             ok = true;
         } else if (GetLastError() == ERROR_ACCESS_DENIED) {
             ok = true;
         }
         if (!ok) return false;
 
+        // Ensure stdio streams are tied to console buffer
+        FILE* f = nullptr;
+        freopen_s(&f, "CONOUT$", "w", stdout);
+        freopen_s(&f, "CONOUT$", "w", stderr);
+        freopen_s(&f, "CONIN$", "r", stdin);
+
         SetConsoleOutputCP(CP_UTF8);
         SetConsoleCP(CP_UTF8);
-        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-        EnableVT(hOut);
-        // QuickEdit: a click in the console freezes WriteConsole -> would stall the sink. Disable it.
-        HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+
+        // Clean up previously allocated handles if reallocating
+        if (m_ownsConsoleHandles) {
+            if (m_hConsole && m_hConsole != INVALID_HANDLE_VALUE && m_hConsole != GetStdHandle(STD_OUTPUT_HANDLE)) {
+                CloseHandle(m_hConsole);
+            }
+            if (m_hConsoleIn && m_hConsoleIn != INVALID_HANDLE_VALUE && m_hConsoleIn != GetStdHandle(STD_INPUT_HANDLE)) {
+                CloseHandle(m_hConsoleIn);
+            }
+            m_ownsConsoleHandles = false;
+        }
+
+        // Open CONOUT$ directly to guarantee a valid output handle in Windows GUI processes
+        bool ownsOut = false;
+        HANDLE hOut = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                  OPEN_EXISTING, 0, nullptr);
+        if (hOut == INVALID_HANDLE_VALUE || hOut == nullptr) {
+            hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        } else {
+            SetStdHandle(STD_OUTPUT_HANDLE, hOut);
+            ownsOut = true;
+        }
+
+        if (!EnableVT(hOut)) {
+            // Wine / Proton Fallback: If VTP fails to activate, cleanly fallback to monochrome output
+            m_enableColors.store(false, std::memory_order_relaxed);
+        }
+
+        // Open CONIN$ and configure QuickEdit Mode for mouse selection & copy
+        bool ownsIn = false;
+        HANDLE hIn = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                 OPEN_EXISTING, 0, nullptr);
+        if (hIn == INVALID_HANDLE_VALUE || hIn == nullptr) {
+            hIn = GetStdHandle(STD_INPUT_HANDLE);
+        } else {
+            SetStdHandle(STD_INPUT_HANDLE, hIn);
+            ownsIn = true;
+        }
+
         DWORD inMode = 0;
-        if (hIn != INVALID_HANDLE_VALUE && GetConsoleMode(hIn, &inMode))
-            SetConsoleMode(hIn, (inMode & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS);
+        if (hIn != INVALID_HANDLE_VALUE && hIn != nullptr && GetConsoleMode(hIn, &inMode)) {
+            // ENABLE_QUICK_EDIT_MODE + ENABLE_EXTENDED_FLAGS allows selecting text with mouse and copying (Ctrl+C / Right-Click / Enter)
+            SetConsoleMode(hIn, inMode | ENABLE_QUICK_EDIT_MODE | ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE);
+        }
+
         if (title) SetConsoleTitleA(title);
 
         m_hConsole = hOut;
+        m_hConsoleIn = hIn;
+        m_ownsConsoleHandles = (ownsOut || ownsIn);
         m_consoleAllocated.store(true);
         m_enableColors.store(true, std::memory_order_relaxed);
 
@@ -322,7 +368,7 @@ public:
             "\033[95m======================================================================\033[0m\n"
             "\033[96m  dreamkurumiHT Diagnostics Console (Client Mode)\033[0m\n"
             "\033[90m  Monitoring Enshrouded Hooks, LiveGameSettings & Crash Guard...\033[0m\n"
-            "\033[93m  Tip: Press F9 for In-Game Menu | F10 for In-Game Console\033[0m\n"
+            "\033[93m  Tip: QuickEdit Enabled (Select & Press Enter to Copy) | F9 Menu\033[0m\n"
             "\033[95m======================================================================\033[0m\n\n";
         DWORD w = 0;
         WriteConsoleA(m_hConsole, banner, (DWORD)(sizeof(banner) - 1), &w, nullptr);
@@ -332,8 +378,18 @@ public:
     void FreeConsoleWindow() {
         std::lock_guard<std::mutex> lk(m_sinkMutex);
         if (m_consoleAllocated.load()) {
+            if (m_ownsConsoleHandles) {
+                if (m_hConsole && m_hConsole != INVALID_HANDLE_VALUE && m_hConsole != GetStdHandle(STD_OUTPUT_HANDLE)) {
+                    CloseHandle(m_hConsole);
+                }
+                if (m_hConsoleIn && m_hConsoleIn != INVALID_HANDLE_VALUE && m_hConsoleIn != GetStdHandle(STD_INPUT_HANDLE)) {
+                    CloseHandle(m_hConsoleIn);
+                }
+                m_ownsConsoleHandles = false;
+            }
             FreeConsole();
             m_hConsole = nullptr;
+            m_hConsoleIn = nullptr;
             m_consoleAllocated.store(false);
         }
     }
@@ -458,13 +514,68 @@ public:
     uint64_t QpcFrequency() const { return m_qpcFreq; }
     uint32_t DroppedTotal() const { return m_droppedTotal.load(std::memory_order_relaxed); }
 
+    static const char* LevelName(LogLevel l) {
+        switch (l) {
+            case LogLevel::Trace: return "TRACE";
+            case LogLevel::Debug: return "DEBUG";
+            case LogLevel::Info:  return "INFO ";
+            case LogLevel::Warn:  return "WARN ";
+            case LogLevel::Error: return "ERROR";
+            case LogLevel::Fatal: return "FATAL";
+            default:              return "INFO ";
+        }
+    }
+
+    static const char* LevelBadgeColor(LogLevel l) {
+        switch (l) {
+            case LogLevel::Trace: return "\033[90m";         // Dark gray badge
+            case LogLevel::Debug: return "\033[90m";         // Dark gray badge
+            case LogLevel::Info:  return "\033[32m";         // Emerald Green badge
+            case LogLevel::Warn:  return "\033[1;33m";       // Bold Gold / Amber badge
+            case LogLevel::Error: return "\033[1;31m";       // Bold Red badge
+            case LogLevel::Fatal: return "\033[1;97;41m";    // Bold White text on Red background
+            default:              return "\033[0m";
+        }
+    }
+
+    static const char* MessageColor(LogLevel l) {
+        switch (l) {
+            case LogLevel::Trace: return "\033[90m";   // Muted gray
+            case LogLevel::Debug: return "\033[90m";   // Muted gray
+            case LogLevel::Info:  return "\033[0m";    // Default terminal white/light
+            case LogLevel::Warn:  return "\033[93m";   // Light yellow for warning text
+            case LogLevel::Error: return "\033[91m";   // Light red for error text
+            case LogLevel::Fatal: return "\033[1;91m"; // Bold bright red for fatal text
+            default:              return "\033[0m";
+        }
+    }
+
+    static const char* LevelColor(LogLevel l) {
+        return LevelBadgeColor(l);
+    }
+
+    static void PrintFormattedEntry(const LogEntry& entry) {
+        if (Instance().m_enableColors.load(std::memory_order_relaxed)) {
+            printf("\033[90m[%s] [T%05lu]\033[0m \033[36m[%-6s]\033[0m %s[%s]\033[0m %s%s\033[0m\n",
+                   entry.timestamp.c_str(),
+                   (unsigned long)entry.threadId,
+                   ChannelToString(entry.channel),
+                   LevelBadgeColor(entry.level),
+                   LevelName(entry.level),
+                   MessageColor(entry.level),
+                   entry.message.c_str());
+        } else {
+            printf("%s", entry.rawFormatted.c_str());
+        }
+    }
+
 private:
     // ------------------------------------------------------------------------
     // Ring buffer (Vyukov bounded MPSC style; producers = any thread, consumer = worker)
     // ------------------------------------------------------------------------
-    static constexpr size_t   kCapacity     = 8192;           // power of two
+    static constexpr size_t   kCapacity     = 4096;           // power of two
     static constexpr uint32_t kMask         = (uint32_t)kCapacity - 1;
-    static constexpr size_t   kMsgMax       = 480;
+    static constexpr size_t   kMsgMax       = 2048;
     static constexpr size_t   kMaxFileBytes = 10u * 1024u * 1024u;
     static constexpr int      kKeepFiles    = 3;
 
@@ -503,6 +614,16 @@ private:
 
     // ---- producer side -------------------------------------------------------
     inline void Enqueue(LogChannel ch, LogLevel level, const char* msg, size_t len) {
+        if (!msg || len == 0) return;
+        char cleanBuf[kMsgMax];
+        LogLevel detectedLevel = level;
+        bool foundLevel = false;
+        size_t strippedLen = RawLogStripLegacy(msg, len, cleanBuf, sizeof(cleanBuf), &detectedLevel, &foundLevel);
+        if (strippedLen > 0) {
+            msg = cleanBuf;
+            len = strippedLen;
+            if (foundLevel) level = detectedLevel;
+        }
         if (len > kMsgMax) len = kMsgMax;
         uint32_t pos = m_head.load(std::memory_order_relaxed);
         for (;;) {
@@ -600,31 +721,45 @@ private:
     }
 
     void EmitLocked(uint64_t qpc, DWORD tid, LogLevel level, LogChannel ch, const char* msg, size_t len) {
+        RawLogReentryGuard reentryGuard;
+        if (!reentryGuard.Acquired()) return;
+
         uint64_t dayMs = (m_baseMsOfDay + QpcToMs(qpc)) % 86400000ULL;
         char ts[16];
         snprintf(ts, sizeof(ts), "%02u:%02u:%02u.%03u",
                  (unsigned)(dayMs / 3600000ULL), (unsigned)(dayMs / 60000ULL % 60),
                  (unsigned)(dayMs / 1000ULL % 60), (unsigned)(dayMs % 1000ULL));
 
-        char hdr[96];
-        int hl = snprintf(hdr, sizeof(hdr), "[%s][T%05lu][%-7s:%8s] ", ts, (unsigned long)tid,
-                          LevelName(level), ChannelToString(ch));
-        m_line.assign(hdr, (size_t)hl);
+        // 1. Plain text format for disk file logging (zero ANSI codes, clean & aligned)
+        char fileHdr[96];
+        int fhl = snprintf(fileHdr, sizeof(fileHdr), "[%s] [T%05lu] [%-6s] [%s] ",
+                           ts, (unsigned long)tid, ChannelToString(ch), LevelName(level));
+        m_line.assign(fileHdr, (size_t)fhl);
         m_line.append(msg, len);
         m_line.push_back('\n');
 
         m_fileBuf += m_line;
+
+        // 2. Modern segmented color format for console (Visual Hierarchy)
         if (m_hConsole) {
             if (m_enableColors.load(std::memory_order_relaxed)) {
-                m_conBuf += LevelColor(level);
-                m_conBuf += m_line;
-                m_conBuf += "\033[0m";
+                char conHdr[144];
+                int chl = snprintf(conHdr, sizeof(conHdr),
+                                   "\033[90m[%s] [T%05lu]\033[0m \033[36m[%-6s]\033[0m %s[%s]\033[0m %s",
+                                   ts, (unsigned long)tid,
+                                   ChannelToString(ch),
+                                   LevelBadgeColor(level), LevelName(level),
+                                   MessageColor(level));
+                m_conBuf.append(conHdr, (size_t)chl);
+                m_conBuf.append(msg, len);
+                m_conBuf.append("\033[0m\n");
             } else {
                 m_conBuf += m_line;
             }
         }
         if (m_debugOut.load(std::memory_order_relaxed)) OutputDebugStringA(m_line.c_str());
-        if (m_externalCallback) m_externalCallback(m_line.c_str());
+        // Forward to host callback if no local console handle is active (avoids duplicate uncolored prints & double timestamps)
+        if (m_externalCallback && !m_hConsole) m_externalCallback(m_line.c_str());
 
         std::lock_guard<std::mutex> hl2(m_historyMutex);
         if (m_maxHistory > 0) {
@@ -767,32 +902,11 @@ private:
         return w;
     }
 
-    static void EnableVT(HANDLE h) {
+    static bool EnableVT(HANDLE h) {
         DWORD mode = 0;
         if (h != INVALID_HANDLE_VALUE && h != nullptr && GetConsoleMode(h, &mode))
-            SetConsoleMode(h, mode | 0x0004 /* ENABLE_VIRTUAL_TERMINAL_PROCESSING */);
-    }
-
-    static const char* LevelName(LogLevel l) {
-        switch (l) {
-            case LogLevel::Debug: return "Debug";
-            case LogLevel::Info:  return "Info";
-            case LogLevel::Warn:  return "Warning";
-            case LogLevel::Error: return "Error";
-            case LogLevel::Fatal: return "Fatal";
-            default:              return "Info";
-        }
-    }
-
-    static const char* LevelColor(LogLevel l) {
-        switch (l) {
-            case LogLevel::Debug: return "\033[90m";
-            case LogLevel::Info:  return "\033[92m";
-            case LogLevel::Warn:  return "\033[93m";
-            case LogLevel::Error: return "\033[91m";
-            case LogLevel::Fatal: return "\033[1;95m";
-            default:              return "";
-        }
+            return SetConsoleMode(h, mode | 0x0004 /* ENABLE_VIRTUAL_TERMINAL_PROCESSING */ | 0x0001 /* ENABLE_PROCESSED_OUTPUT */) != FALSE;
+        return false;
     }
 
     uint64_t QpcToMs(uint64_t q) const {
@@ -875,6 +989,8 @@ private:
     HANDLE m_hFile{INVALID_HANDLE_VALUE};
     size_t m_fileBytes{0};
     HANDLE m_hConsole{nullptr};
+    HANDLE m_hConsoleIn{nullptr};
+    bool m_ownsConsoleHandles{false};
     std::atomic<bool> m_consoleAllocated{false};
     std::atomic<bool> m_enableColors{true};
     std::atomic<bool> m_debugOut{false};

@@ -246,12 +246,20 @@ public:
                 m_shadowModules[changedPath] = { changedPath, newShadow, hNewMod, info.reloadCount + 1, std::make_shared<std::atomic<int32_t>>(0) };
             }
 
-            // 3. Initialize new instance
+            // 3. Reset circuit breaker for reloaded mod
+            std::string modBaseName = GetFilenameOnly(changedPath);
+            if (modBaseName.size() > 4 && modBaseName.substr(modBaseName.size() - 4) == ".dll") {
+                modBaseName = modBaseName.substr(0, modBaseName.size() - 4);
+            }
+            DreamCrashGuard::ResetCircuit(modBaseName.c_str());
+            DreamCrashGuard::ResetCircuit(GetFilenameOnly(changedPath).c_str());
+
+            // 4. Initialize new instance
             DreamCrashGuard::ExecuteSafely("ShadowLoadNew", [&]() {
                 onLoad(hNewMod);
             });
 
-            DREAM_LOG_INFO("DreamWatcher: Successfully Hot-Reloaded '%s' (Generation #%llu, Handle: %p)",
+            DREAM_LOG_INFO("DreamWatcher: Successfully Hot-Reloaded '%s' (Generation #%llu, Handle: %p, Circuit Breaker Reset)",
                            changedPath.c_str(), info.reloadCount + 1, hNewMod);
         });
 

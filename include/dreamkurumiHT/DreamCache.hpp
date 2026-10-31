@@ -26,6 +26,7 @@ public:
         m_cachePath = cacheFilePath;
         m_currentModuleBase = reinterpret_cast<uintptr_t>(GetModuleHandleA(NULL));
         m_currentGameBuild = ReadExecutableBuildTimestamp();
+        m_currentImageSize = ReadExecutableSizeOfImage();
 
         return LoadCache();
     }
@@ -146,6 +147,7 @@ private:
         if (m_currentModuleBase == 0) {
             m_currentModuleBase = reinterpret_cast<uintptr_t>(GetModuleHandleA(NULL));
             m_currentGameBuild = ReadExecutableBuildTimestamp();
+            m_currentImageSize = ReadExecutableSizeOfImage();
             LoadCache();
         }
     }
@@ -156,6 +158,7 @@ private:
 
         file << "# dreamkurumiHT Symbol Offset Cache\n";
         file << "build_timestamp=" << m_currentGameBuild << "\n";
+        file << "image_size=" << m_currentImageSize << "\n";
         file << "\n[offsets]\n";
 
         for (const auto& [name, rva] : m_offsets) {
@@ -165,6 +168,7 @@ private:
         }
 
         m_cachedBuild = m_currentGameBuild;
+        m_cachedImageSize = m_currentImageSize;
         m_dirty = false;
         return true;
     }
@@ -180,6 +184,19 @@ private:
         if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
 
         return nt->FileHeader.TimeDateStamp;
+    }
+
+    static uint32_t ReadExecutableSizeOfImage() {
+        HMODULE hExe = GetModuleHandleA(NULL);
+        if (!hExe) return 0;
+
+        auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(hExe);
+        if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+
+        auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(reinterpret_cast<uint8_t*>(hExe) + dos->e_lfanew);
+        if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
+
+        return nt->OptionalHeader.SizeOfImage;
     }
 
     bool LoadCache() {
@@ -214,15 +231,20 @@ private:
 
             if (key == "build_timestamp") {
                 m_cachedBuild = static_cast<uint32_t>(std::strtoul(val.c_str(), nullptr, 0));
+            } else if (key == "image_size") {
+                m_cachedImageSize = static_cast<uint32_t>(std::strtoul(val.c_str(), nullptr, 0));
             } else if (inOffsetsSection || key.find("0x") != std::string::npos || val.find("0x") != std::string::npos) {
                 uintptr_t rva = static_cast<uintptr_t>(std::strtoull(val.c_str(), nullptr, 0));
                 m_offsets[key] = rva;
             }
         }
 
-        if (m_cachedBuild != m_currentGameBuild) {
-            DREAM_LOG_WARN("DreamCache: Game executable update or unverified cache detected! (Cached: 0x%08X vs Executable: 0x%08X). Invalidating stale offset cache.",
-                           m_cachedBuild, m_currentGameBuild);
+        bool buildMismatch = (m_cachedBuild != m_currentGameBuild);
+        bool sizeMismatch = (m_cachedImageSize != 0 && m_currentImageSize != 0 && m_cachedImageSize != m_currentImageSize);
+
+        if (buildMismatch || sizeMismatch) {
+            DREAM_LOG_WARN("DreamCache: Game executable update or unverified cache detected! (Cached: 0x%08X/0x%X vs Executable: 0x%08X/0x%X). Invalidating stale offset cache.",
+                           m_cachedBuild, m_cachedImageSize, m_currentGameBuild, m_currentImageSize);
             m_offsets.clear();
             m_dirty = true;
             return false;
@@ -235,6 +257,8 @@ private:
     uintptr_t m_currentModuleBase{0};
     uint32_t m_currentGameBuild{0};
     uint32_t m_cachedBuild{0};
+    uint32_t m_currentImageSize{0};
+    uint32_t m_cachedImageSize{0};
     std::unordered_map<std::string, uintptr_t> m_offsets;
     bool m_dirty{false};
     std::mutex m_mutex;

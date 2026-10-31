@@ -48,10 +48,12 @@ public:
         if (!s_checked) {
             char path[MAX_PATH] = {0};
             if (GetModuleFileNameA(NULL, path, MAX_PATH)) {
-                std::string exeName = path;
-                for (char& c : exeName) c = static_cast<char>(::tolower(c));
-                if (exeName.find("enshrouded_server") != std::string::npos ||
-                    exeName.find("server") != std::string::npos) {
+                std::string fullPath = path;
+                size_t lastSlash = fullPath.find_last_of("\\/");
+                std::string filename = (lastSlash != std::string::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
+                for (char& c : filename) c = static_cast<char>(::tolower(c));
+                if (filename.find("enshrouded_server") != std::string::npos ||
+                    filename.find("server.exe") != std::string::npos) {
                     s_isServer = true;
                 }
             }
@@ -87,7 +89,7 @@ public:
     }
 
     // Returns the absolute directory containing the calling mod DLL
-    // Example: "H:/SteamLibrary/steamapps/common/Enshrouded/mods/MyMod/"
+    // Example: "C:/Games/Enshrouded/mods/MyMod/"
     static std::filesystem::path GetModDirectory(HMODULE hMod = NULL) {
         if (!hMod) {
             hMod = GetCallingModule();
@@ -468,6 +470,18 @@ public:
             file << "\n";
         }
         return true;
+    }
+
+    bool HasSection(const std::string& section) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_data.find(section) != m_data.end();
+    }
+
+    bool HasKey(const std::string& section, const std::string& key) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto sIt = m_data.find(section);
+        if (sIt == m_data.end()) return false;
+        return sIt->second.find(key) != sIt->second.end();
     }
 
     std::string GetString(const std::string& section, const std::string& key, const std::string& defaultVal = "") {

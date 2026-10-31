@@ -1,0 +1,2 @@
+# Exempt self-scanning scripts from triggering on regex pattern definitions
+scripts/pre-commit

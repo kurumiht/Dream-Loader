@@ -7,6 +7,7 @@
 #include <chrono>
 #include <mutex>
 #include <atomic>
+#include <thread>
 #include <unordered_set>
 #include <algorithm>
 #include "DreamCrashGuard.hpp"
@@ -305,8 +306,42 @@ public:
         m_cancelledIds.clear();
     }
 
+    // Start background dedicated server ticker (for headless servers without Vulkan swapchain)
+    void StartDedicatedServerTicker(uint32_t intervalMs = 15) {
+        if (m_tickerRunning.load()) return;
+        m_tickerRunning.store(true);
+        m_tickerThread = std::thread([this, intervalMs]() {
+            while (m_tickerRunning.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
+                if (!m_tickerRunning.load()) break;
+                Tick(2.0); // 2ms budget per tick
+            }
+        });
+        DREAM_LOG_INFO("DreamScheduler: Background dedicated server ticker started (%u ms interval)", intervalMs);
+    }
+
+    void StopDedicatedServerTicker() {
+        if (!m_tickerRunning.load()) return;
+        m_tickerRunning.store(false);
+        if (m_tickerThread.joinable()) {
+            if (m_tickerThread.get_id() != std::this_thread::get_id()) {
+                m_tickerThread.join();
+            } else {
+                m_tickerThread.detach();
+            }
+        }
+        DREAM_LOG_INFO("DreamScheduler: Background dedicated server ticker stopped");
+    }
+
+    bool IsDedicatedServerTickerRunning() const {
+        return m_tickerRunning.load();
+    }
+
 private:
     DreamScheduler() = default;
+    ~DreamScheduler() {
+        StopDedicatedServerTicker();
+    }
 
     bool IsCancelled(TaskId id) const {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
@@ -352,6 +387,8 @@ private:
     std::vector<RecurringTask> m_recurringTasks;
     std::vector<YieldTask> m_yieldTasks;
     std::unordered_set<TaskId> m_cancelledIds;
+    std::atomic<bool> m_tickerRunning{false};
+    std::thread m_tickerThread;
 };
 
 } // namespace dreamkurumi

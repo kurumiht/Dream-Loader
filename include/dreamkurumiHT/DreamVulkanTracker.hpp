@@ -21,6 +21,10 @@ namespace dreamkurumi {
 #define VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT 0x00000010
 #endif
 
+#ifndef VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR
+#define VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR 0x00000001
+#endif
+
 #ifndef VK_FORMAT_UNDEFINED
 #define VK_FORMAT_UNDEFINED 0
 #endif
@@ -77,6 +81,22 @@ struct SwapchainContext {
     VkImageUsageFlags      usage       = 0;
     std::vector<VkImage>   images;
     uint64_t               generation  = 0; // Prevents ABA handle reuse bugs
+
+    // Dev 2 Color Space & Format Aliasing Helpers
+    bool IsSrgbFormat() const noexcept {
+        return format == 50 /* VK_FORMAT_B8G8R8A8_SRGB */ || format == 43 /* VK_FORMAT_R8G8B8A8_SRGB */;
+    }
+
+    bool IsHdrFormat() const noexcept {
+        return format == 64 /* VK_FORMAT_A2B10G10R10_UNORM_PACK32 */ ||
+               format == 100 /* VK_FORMAT_R16G16B16A16_SFLOAT */;
+    }
+
+    VkFormat GetUnormAliasedFormat() const noexcept {
+        if (format == 50 /* VK_FORMAT_B8G8R8A8_SRGB */) return 44 /* VK_FORMAT_B8G8R8A8_UNORM */;
+        if (format == 43 /* VK_FORMAT_R8G8B8A8_SRGB */) return 37 /* VK_FORMAT_R8G8B8A8_UNORM */;
+        return format;
+    }
 };
 
 // ============================================================================
@@ -104,6 +124,11 @@ public:
         // Copy createInfo so we can safely guarantee COLOR_ATTACHMENT_BIT for overlay rendering
         VkSwapchainCreateInfoKHR modifiedInfo = *pCreateInfo;
         modifiedInfo.imageUsage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        // Dev 2 Format Aliasing: If swapchain is sRGB, add MUTABLE_FORMAT_BIT so overlay can create a UNORM view
+        if (modifiedInfo.imageFormat == 50 /* VK_FORMAT_B8G8R8A8_SRGB */ || modifiedInfo.imageFormat == 43 /* VK_FORMAT_R8G8B8A8_SRGB */) {
+            modifiedInfo.flags |= VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR;
+        }
 
         VkResult res = origCreateSwapchain(device, &modifiedInfo, pAllocator, pSwapchain);
         if (res != VK_SUCCESS) {

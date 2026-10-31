@@ -206,19 +206,15 @@ public:
                     continue;
                 }
 
-                // Handle short conditional jump 70..7F rel8 -> widen to 0F 80..8F rel32
+                // Handle short conditional jump 70..7F rel8 -> widen to 0F 80..8F rel32 or inverted Jcc if > 2GB
                 if ((decoded.opcode >= 0x70 && decoded.opcode <= 0x7F) && decoded.length == 2) {
                     int8_t oldDisp = *reinterpret_cast<const int8_t*>(m_target + curOffset + 1);
                     uintptr_t destAddr = reinterpret_cast<uintptr_t>(m_target + curOffset + 2) + oldDisp;
                     if (destAddr >= reinterpret_cast<uintptr_t>(m_target) && destAddr < reinterpret_cast<uintptr_t>(m_target + m_stolenLen)) return false;
-                    uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_trampoline + trampOffset + 6);
-                    int64_t newDisp = static_cast<int64_t>(destAddr - newInstrEnd);
-                    if (newDisp < INT32_MIN || newDisp > INT32_MAX) return false;
-                    m_trampoline[trampOffset] = 0x0F;
-                    m_trampoline[trampOffset + 1] = static_cast<uint8_t>(0x80 + (decoded.opcode & 0x0F));
-                    *reinterpret_cast<int32_t*>(m_trampoline + trampOffset + 2) = static_cast<int32_t>(newDisp);
+                    size_t emitted = EmitConditionalJumpRelocated(m_trampoline + trampOffset, decoded.opcode & 0x0F, destAddr);
+                    if (emitted == 0) return false;
                     curOffset += 2;
-                    trampOffset += 6;
+                    trampOffset += emitted;
                     continue;
                 }
 

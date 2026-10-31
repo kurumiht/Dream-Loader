@@ -9,6 +9,7 @@
 #include <cctype>
 #include "DreamLog.hpp"
 #include "DreamNetBridge.hpp"
+#include "DreamRpcMultiplexer.hpp"
 
 namespace dreamkurumi {
 
@@ -39,11 +40,17 @@ public:
         info.loginTimestamp = GetTickCount64();
         info.pSession = pSession;
         m_players[entityId] = info;
+
+        // Auto-authorize connected player for RPC multiplexer (Universal Access - Rule 2)
+        DreamRpcMultiplexer::Instance().AuthorizeCaller(entityId, true);
     }
 
     void OnPlayerDisconnect(uint32_t entityId) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_players.erase(entityId);
+
+        // De-authorize disconnected player from RPC multiplexer
+        DreamRpcMultiplexer::Instance().AuthorizeCaller(entityId, false);
     }
 
     std::vector<ConnectedPlayerInfo> GetAllPlayers() const {

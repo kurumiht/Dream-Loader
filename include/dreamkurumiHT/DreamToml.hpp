@@ -121,7 +121,7 @@ public:
                     } else if (line[i] == quoteChar) {
                         inQuotes = false;
                     }
-                } else if (line[i] == '#' && !inQuotes) {
+                } else if ((line[i] == '#' || line[i] == ';') && !inQuotes) {
                     commentPos = i;
                     break;
                 }

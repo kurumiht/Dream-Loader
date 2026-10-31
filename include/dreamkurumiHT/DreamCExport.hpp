@@ -712,4 +712,170 @@ DK_API bool DK_CpuSupportsAvx() {
     return dreamkurumi::CpuSupportsAvx();
 }
 
+// ============================================================================
+// CrashGuard Sandbox Controls (v3.8.5)
+// ============================================================================
+DK_API void DK_CrashGuard_SetDebuggerPassThrough(bool enable) {
+    dreamkurumi::DreamCrashGuard::SetDebuggerPassThrough(enable);
+}
+
+DK_API bool DK_CrashGuard_GetDebuggerPassThrough() {
+    return dreamkurumi::DreamCrashGuard::GetDebuggerPassThrough();
+}
+
+DK_API void DK_CrashGuard_ResetCircuit(const char* modName) {
+    dreamkurumi::DreamCrashGuard::ResetCircuit(modName);
+}
+
+DK_API bool DK_CrashGuard_IsCircuitTripped(const char* modName) {
+    return dreamkurumi::DreamCrashGuard::IsCircuitTripped(modName);
+}
+
+DK_API uint32_t DK_CrashGuard_GetFaultCount(const char* modName) {
+    return dreamkurumi::DreamCrashGuard::GetFaultCount(modName);
+}
+
+DK_API void DK_CrashGuard_SetCircuitThreshold(uint32_t threshold) {
+    dreamkurumi::DreamCrashGuard::SetCircuitThreshold(threshold);
+}
+
+// ============================================================================
+// DreamStore Persistent Key-Value Storage (v3.8.5)
+// ============================================================================
+DK_API void DK_Store_SetString(const char* ns, const char* key, const char* val) {
+    if (ns && key && val) {
+        dreamkurumi::DreamStore::Instance().SetString(ns, key, std::string(val));
+    }
+}
+
+DK_API bool DK_Store_GetString(const char* ns, const char* key, char* outBuffer, uint32_t outSize, const char* fallback) {
+    if (!ns || !key || !outBuffer || outSize == 0) return false;
+    std::string v = dreamkurumi::DreamStore::Instance().GetString(ns, key, fallback ? std::string(fallback) : std::string());
+    strncpy_s(outBuffer, outSize, v.c_str(), _TRUNCATE);
+    return true;
+}
+
+DK_API void DK_Store_SetInt(const char* ns, const char* key, int64_t val) {
+    if (ns && key) {
+        dreamkurumi::DreamStore::Instance().SetInt(ns, key, val);
+    }
+}
+
+DK_API int64_t DK_Store_GetInt(const char* ns, const char* key, int64_t fallback) {
+    if (!ns || !key) return fallback;
+    return dreamkurumi::DreamStore::Instance().GetInt(ns, key, fallback);
+}
+
+DK_API void DK_Store_SetFloat(const char* ns, const char* key, double val) {
+    if (ns && key) {
+        dreamkurumi::DreamStore::Instance().SetFloat(ns, key, val);
+    }
+}
+
+DK_API double DK_Store_GetFloat(const char* ns, const char* key, double fallback) {
+    if (!ns || !key) return fallback;
+    return dreamkurumi::DreamStore::Instance().GetFloat(ns, key, fallback);
+}
+
+DK_API void DK_Store_SetBool(const char* ns, const char* key, bool val) {
+    if (ns && key) {
+        dreamkurumi::DreamStore::Instance().SetBool(ns, key, val);
+    }
+}
+
+DK_API bool DK_Store_GetBool(const char* ns, const char* key, bool fallback) {
+    if (!ns || !key) return fallback;
+    return dreamkurumi::DreamStore::Instance().GetBool(ns, key, fallback);
+}
+
+DK_API bool DK_Store_Flush(const char* ns) {
+    if (!ns) return false;
+    return dreamkurumi::DreamStore::Instance().FlushNamespace(ns);
+}
+
+DK_API size_t DK_Store_FlushAll() {
+    return dreamkurumi::DreamStore::Instance().FlushAll();
+}
+
+// ============================================================================
+// Network RPC Multiplexer V2 (v3.8.5)
+// ============================================================================
+DK_API uint32_t DK_Rpc_PackFrame(uint32_t callerId, uint32_t targetId, uint32_t rpcHash,
+                                const uint8_t* payload, uint32_t payloadSize,
+                                uint8_t* outBuffer, uint32_t maxBufferSize) {
+    if (!outBuffer || maxBufferSize < 28) return 0;
+    std::vector<uint8_t> pVec;
+    if (payload && payloadSize > 0) {
+        pVec.assign(payload, payload + payloadSize);
+    }
+    auto frame = dreamkurumi::DreamRpcMultiplexer::Instance().PackRpcFrame(callerId, targetId, rpcHash, pVec);
+    if (frame.size() > maxBufferSize) return 0;
+    std::memcpy(outBuffer, frame.data(), frame.size());
+    return static_cast<uint32_t>(frame.size());
+}
+
+DK_API void DK_Rpc_AuthorizeCaller(uint32_t callerId, bool allowed) {
+    dreamkurumi::DreamRpcMultiplexer::Instance().AuthorizeCaller(callerId, allowed);
+}
+
+DK_API void DK_Rpc_SetTokenBucketParams(double refillRatePerSec, double maxBurstCapacity) {
+    dreamkurumi::DreamRpcMultiplexer::Instance().SetTokenBucketParams(refillRatePerSec, maxBurstCapacity);
+}
+
+// ============================================================================
+// Diagnostic Overlay Controls (v3.8.5)
+// ============================================================================
+DK_API void DK_DiagnosticOverlay_Toggle() {
+    dreamkurumi::DreamDiagnosticOverlay::Instance().Toggle();
+}
+
+DK_API void DK_DiagnosticOverlay_SetVisible(bool visible) {
+    dreamkurumi::DreamDiagnosticOverlay::Instance().SetVisible(visible);
+}
+
+DK_API bool DK_DiagnosticOverlay_IsVisible() {
+    return dreamkurumi::DreamDiagnosticOverlay::Instance().IsVisible();
+}
+
+DK_API void DK_DiagnosticOverlay_RegisterHook(const char* name, uintptr_t targetAddress, const char* type) {
+    if (name && type) {
+        dreamkurumi::DreamDiagnosticOverlay::Instance().RegisterHook(name, targetAddress, type);
+    }
+}
+
+// ============================================================================
+// Plugin Gate & Epilogue-Safe Draining (v3.9.0)
+// ============================================================================
+DK_API bool DK_PluginGate_TryEnter(const char* modName) {
+    if (!modName) return false;
+    return dreamkurumi::PluginGateRegistry::Instance().GetOrCreateGate(modName).TryEnter();
+}
+
+DK_API void DK_PluginGate_Leave(const char* modName) {
+    if (modName) {
+        dreamkurumi::PluginGateRegistry::Instance().GetOrCreateGate(modName).Leave();
+    }
+}
+
+DK_API bool DK_PluginGate_CloseAndDrain(const char* modName, uint32_t timeoutMs) {
+    if (!modName) return false;
+    return dreamkurumi::PluginGateRegistry::Instance().GetOrCreateGate(modName).CloseAndDrain(timeoutMs);
+}
+
+DK_API uint64_t DK_PluginGate_GetInFlight(const char* modName) {
+    if (!modName) return 0;
+    return dreamkurumi::PluginGateRegistry::Instance().GetOrCreateGate(modName).GetInFlightCount();
+}
+
+// ============================================================================
+// GNS Transport Demultiplexing (v3.9.0)
+// ============================================================================
+DK_API int DK_Gns_FilterAndDemux(void** ppOutMessages, int numMessages, bool isServerSide) {
+    return dreamkurumi::DreamGnsTransportHook::FilterAndDemuxIncomingMessages(
+        reinterpret_cast<dreamkurumi::SteamNetworkingMessageMinimal**>(ppOutMessages),
+        numMessages,
+        isServerSide
+    );
+}
+
 } // extern "C"
