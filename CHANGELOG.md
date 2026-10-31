@@ -4,6 +4,45 @@ All notable changes to the **dreamkurumiHT** Native Harmony Modding Framework wi
 
 ---
 
+## [v3.9.0 v1.1] - 2026-10-31 (Full Codebase Function Audit, Bug Fixes & ABI Hardening)
+
+### 🐛 Critical Bug Fixes
+- **`ConfigEntry<T>::OnChange` Callback Propagation (`DreamLiveConfig.hpp`):**
+  - Resolved subtle callback loss where `Bind()` returned a copied `ConfigEntry<T>` whose local callbacks were never invoked.
+  - Migrated `m_callbacks` to `std::shared_ptr<std::vector<std::function<void(const T&)>>>`, ensuring all copies share the active callback registry.
+  - Eliminated duplicate `NotifyChanged()` invocations in `ConfigEntry<T>::Set` (which was previously firing callbacks twice per update).
+- **Task Loss on Time Budget Exhaustion (`DreamScheduler.hpp`):**
+  - Resolved critical task dropping bug where `isTimeExhausted()` in `DreamScheduler::Tick` broke early, permanently destroying remaining unexecuted `YieldUntil` and `RunAfter` delayed tasks.
+  - All unprocessed coroutines and delayed tasks are now safely preserved and re-queued.
+  - Recurring tasks (`RunEvery`) that missed their tick due to time exhaustion now reset their `nextRunAt` to the immediate next frame instead of delaying by an entire extra period.
+- **Multi-RVA Telemetry Swallowing & Tag Buffer Fix (`DreamServerTelemetry.hpp`):**
+  - Resolved bug in `FlushCoalescedAlerts()` where distinct fault RVAs within the same 250ms window were swallowed and lost. Packets are now cleanly grouped by `(faultRva, faultCode)`.
+  - Guaranteed `slot.tag[0] = '\0'` termination when `modTag` is null or empty, preventing stale string bleed in ring buffer slots.
+- **`DreamMemory::ReadChain` Boundary Check (`DreamMemory.hpp`):**
+  - Added entry guard `if (offsets.empty()) return fallback;` matching `WriteChain`.
+
+### 🛡️ Hooking Safety & Concurrency Hardening
+- **Mid-Region `CALL` Relocation Guard (`DreamHook.hpp`, `DreamDisasm.hpp`):**
+  - Added `DreamDisasm::IsCall` rejection guard for non-terminal `CALL` instructions (`0xE8`, `0xFF /2`, `0xFF /3`) inside stolen bytes to prevent stack walker and exception unwinder crashes.
+- **High-Frequency MidHook Sampling (`DreamHook.hpp`):**
+  - Applied sampling (1 in 16 ticks) to `QueryPerformanceCounter` in `DreamChainedHookPipeline::Dispatcher`, eliminating microsecond latency overhead on hot-path hooks.
+- **Concurrency Guards (`DreamWatchdog.hpp`, `DreamRpcMultiplexer.hpp`):**
+  - Added `m_mutex` guard in `DreamWatchdog::Start` to prevent concurrent thread initialization races.
+  - Guarded `m_rawSender` snapshot with `m_mutex` in `DreamRpcMultiplexer::DispatchRpc`.
+
+### 🔒 Public ABI Hardening & Golden Verification
+- **Internal Export Trimming (`DreamCExport.hpp`):**
+  - Removed `DK_API` from internal policy enforcement (`DK_Policy_*`), server host wiring, and duplicate exports, eliminating unauthorized mod bypass vectors and reducing unlisted exports to 0.
+- **ABI Versioning & Context Support (`DreamCExport.hpp`, `dreamkurumiHT_plugin.h`):**
+  - Added `DK_GetAbiVersion()` returning `0x00010000`.
+  - Added `DK_MidHook2` supporting custom `void* userData`.
+  - Added typed plugin bindings for `HashFnv1a64`, player context, console commands, and mod networking.
+- **Verification Suite Expansion:**
+  - Added Test 91 & Test 92 covering `ConfigEntry::OnChange`, `ReadChain`, `DreamScheduler` time budget preservation, and telemetry multi-RVA coalescing.
+  - All 92 unit tests passing (100% Green) + ABI golden test exit code 0 (`smoke=0`).
+
+---
+
 ## [v3.9.0] - 2026-10-31 (Kernel Memory Probe Guard, Zero-Freeze Epilogue Drain & GNS Demux)
 
 ### 🛡️ Kernel-Safe Memory Probing & Guard Page Protection (`DreamMemory.hpp`, `DreamCrashGuard.hpp`, `DreamCore.hpp`)
