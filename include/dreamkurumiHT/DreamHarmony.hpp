@@ -124,6 +124,32 @@ public:
 };
 
 // ============================================================================
+// DreamPatchState - Scratch State passed from Prefix to Postfix (__state pattern)
+// Zero-allocation payload for passing context, timestamps, or calculated data.
+// ============================================================================
+struct DreamPatchState {
+    void* ptr{nullptr};
+    int64_t i64{0};
+    uint64_t u64{0};
+    double f64{0.0};
+    uint8_t raw[32]{0};
+
+    template <typename T>
+    void Set(const T& val) {
+        static_assert(sizeof(T) <= sizeof(raw), "DreamPatchState: Payload exceeds 32 bytes");
+        std::memcpy(raw, &val, sizeof(T));
+    }
+
+    template <typename T>
+    T Get() const {
+        static_assert(sizeof(T) <= sizeof(raw), "DreamPatchState: Payload exceeds 32 bytes");
+        T val{};
+        std::memcpy(&val, raw, sizeof(T));
+        return val;
+    }
+};
+
+// ============================================================================
 // Multi-Mod Central Detour Pipeline per Target Address (Signature-Independent)
 // ============================================================================
 template <typename Ret, typename... Args>
@@ -132,6 +158,8 @@ public:
     using TargetFn = Ret(*)(Args...);
     using PrefixFn = std::function<bool(Args&...)>;
     using PostfixFn = std::function<void(Ret&, Args&...)>;
+    using StatePrefixFn = std::function<bool(DreamPatchState&, Args&...)>;
+    using StatePostfixFn = std::function<void(const DreamPatchState&, Ret&, Args&...)>;
 
     struct Subscriber {
         std::string name;
@@ -139,6 +167,8 @@ public:
         void* ownerKey{nullptr};
         PrefixFn prefix;
         PostfixFn postfix;
+        StatePrefixFn statePrefix;
+        StatePostfixFn statePostfix;
     };
 
     bool EnsureHookInstalled(void* target, void* dispatcher) {
@@ -158,19 +188,23 @@ public:
         return reinterpret_cast<TargetFn>(m_hook.GetOriginal());
     }
 
-    void AddSubscriber(const std::string& name, HookPriority priority, void* ownerKey, PrefixFn pfx, PostfixFn post) {
+    void AddSubscriber(const std::string& name, HookPriority priority, void* ownerKey,
+                       PrefixFn pfx, PostfixFn post,
+                       StatePrefixFn statePfx = nullptr, StatePostfixFn statePost = nullptr) {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (auto& s : m_subscribers) {
             if (s.ownerKey == ownerKey) {
                 s.priority = priority;
                 s.prefix = pfx;
                 s.postfix = post;
+                s.statePrefix = statePfx;
+                s.statePostfix = statePost;
                 SortSubscribers();
                 m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
                 return;
             }
         }
-        m_subscribers.push_back({name, priority, ownerKey, pfx, post});
+        m_subscribers.push_back({name, priority, ownerKey, pfx, post, statePfx, statePost});
         SortSubscribers();
         m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
     }
@@ -194,9 +228,26 @@ public:
             return orig ? orig(args...) : Ret{};
         }
 
+        const size_t subCount = snap->size();
+        DreamPatchState localStates[16]{};
+        std::vector<DreamPatchState> heapStates;
+        DreamPatchState* states = localStates;
+        if (subCount > 16) {
+            heapStates.resize(subCount);
+            states = heapStates.data();
+        }
+
         bool runOriginal = true;
-        for (const auto& s : *snap) {
-            if (s.prefix) {
+        for (size_t i = 0; i < subCount; ++i) {
+            const auto& s = (*snap)[i];
+            if (s.statePrefix) {
+                DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
+                    if (!s.statePrefix(states[i], args...)) {
+                        runOriginal = false;
+                    }
+                });
+                if (!runOriginal) break;
+            } else if (s.prefix) {
                 DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
                     if (!s.prefix(args...)) {
                         runOriginal = false;
@@ -211,8 +262,13 @@ public:
             result = orig(args...);
         }
 
-        for (const auto& s : *snap) {
-            if (s.postfix) {
+        for (size_t i = 0; i < subCount; ++i) {
+            const auto& s = (*snap)[i];
+            if (s.statePostfix) {
+                DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
+                    s.statePostfix(states[i], result, args...);
+                });
+            } else if (s.postfix) {
                 DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
                     s.postfix(result, args...);
                 });
@@ -242,6 +298,8 @@ public:
     using TargetFn = void(*)(Args...);
     using PrefixFn = std::function<bool(Args&...)>;
     using PostfixFn = std::function<void(Args&...)>;
+    using StatePrefixFn = std::function<bool(DreamPatchState&, Args&...)>;
+    using StatePostfixFn = std::function<void(const DreamPatchState&, Args&...)>;
 
     struct Subscriber {
         std::string name;
@@ -249,6 +307,8 @@ public:
         void* ownerKey{nullptr};
         PrefixFn prefix;
         PostfixFn postfix;
+        StatePrefixFn statePrefix;
+        StatePostfixFn statePostfix;
     };
 
     bool EnsureHookInstalled(void* target, void* dispatcher) {
@@ -268,19 +328,23 @@ public:
         return reinterpret_cast<TargetFn>(m_hook.GetOriginal());
     }
 
-    void AddSubscriber(const std::string& name, HookPriority priority, void* ownerKey, PrefixFn pfx, PostfixFn post) {
+    void AddSubscriber(const std::string& name, HookPriority priority, void* ownerKey,
+                       PrefixFn pfx, PostfixFn post,
+                       StatePrefixFn statePfx = nullptr, StatePostfixFn statePost = nullptr) {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (auto& s : m_subscribers) {
             if (s.ownerKey == ownerKey) {
                 s.priority = priority;
                 s.prefix = pfx;
                 s.postfix = post;
+                s.statePrefix = statePfx;
+                s.statePostfix = statePost;
                 SortSubscribers();
                 m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
                 return;
             }
         }
-        m_subscribers.push_back({name, priority, ownerKey, pfx, post});
+        m_subscribers.push_back({name, priority, ownerKey, pfx, post, statePfx, statePost});
         SortSubscribers();
         m_snapshot.store(std::make_shared<const std::vector<Subscriber>>(m_subscribers));
     }
@@ -305,9 +369,26 @@ public:
             return;
         }
 
+        const size_t subCount = snap->size();
+        DreamPatchState localStates[16]{};
+        std::vector<DreamPatchState> heapStates;
+        DreamPatchState* states = localStates;
+        if (subCount > 16) {
+            heapStates.resize(subCount);
+            states = heapStates.data();
+        }
+
         bool runOriginal = true;
-        for (const auto& s : *snap) {
-            if (s.prefix) {
+        for (size_t i = 0; i < subCount; ++i) {
+            const auto& s = (*snap)[i];
+            if (s.statePrefix) {
+                DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
+                    if (!s.statePrefix(states[i], args...)) {
+                        runOriginal = false;
+                    }
+                });
+                if (!runOriginal) break;
+            } else if (s.prefix) {
                 DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
                     if (!s.prefix(args...)) {
                         runOriginal = false;
@@ -321,8 +402,13 @@ public:
             orig(args...);
         }
 
-        for (const auto& s : *snap) {
-            if (s.postfix) {
+        for (size_t i = 0; i < subCount; ++i) {
+            const auto& s = (*snap)[i];
+            if (s.statePostfix) {
+                DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
+                    s.statePostfix(states[i], args...);
+                });
+            } else if (s.postfix) {
                 DreamCrashGuard::ExecuteSafely(s.name.c_str(), [&]() {
                     s.postfix(args...);
                 });
@@ -414,33 +500,45 @@ public:
         HookPriority priority = PatchMetadata<Derived>::Priority;
         const char* name = PatchMetadata<Derived>::TargetSymbol ? PatchMetadata<Derived>::TargetSymbol : "HarmonyPatch";
 
-        typename CentralHookPipeline<Ret, Args...>::PrefixFn pfx = [](Args&... args) -> bool {
-            bool runOriginal = true;
-            if constexpr (requires { { Derived::Prefix(args...) } -> std::same_as<bool>; }) {
-                runOriginal = Derived::Prefix(args...);
-            } else if constexpr (requires { Derived::Prefix(args...); }) {
-                Derived::Prefix(args...);
-                runOriginal = true;
-            }
-            return runOriginal;
-        };
+        // 1. Resolve Prefix (State-Aware or Standard)
+        typename CentralHookPipeline<Ret, Args...>::PrefixFn pfx = nullptr;
+        typename CentralHookPipeline<Ret, Args...>::StatePrefixFn statePfx = nullptr;
 
+        if constexpr (requires(DreamPatchState& st, Args&... args) { { Derived::Prefix(st, args...) } -> std::same_as<bool>; }) {
+            statePfx = [](DreamPatchState& st, Args&... args) -> bool { return Derived::Prefix(st, args...); };
+        } else if constexpr (requires(DreamPatchState& st, Args&... args) { Derived::Prefix(st, args...); }) {
+            statePfx = [](DreamPatchState& st, Args&... args) -> bool { Derived::Prefix(st, args...); return true; };
+        } else if constexpr (requires(Args&... args) { { Derived::Prefix(args...) } -> std::same_as<bool>; }) {
+            pfx = [](Args&... args) -> bool { return Derived::Prefix(args...); };
+        } else if constexpr (requires(Args&... args) { Derived::Prefix(args...); }) {
+            pfx = [](Args&... args) -> bool { Derived::Prefix(args...); return true; };
+        }
+
+        // 2. Resolve Postfix (State-Aware or Standard)
         if constexpr (std::is_void_v<Ret>) {
-            typename CentralHookPipeline<void, Args...>::PostfixFn post = [](Args&... args) {
-                if constexpr (requires { Derived::Postfix(args...); }) {
-                    Derived::Postfix(args...);
-                }
-            };
-            pipe.AddSubscriber(name, priority, (void*)&s_autoRegister, pfx, post);
+            typename CentralHookPipeline<void, Args...>::PostfixFn post = nullptr;
+            typename CentralHookPipeline<void, Args...>::StatePostfixFn statePost = nullptr;
+
+            if constexpr (requires(const DreamPatchState& st, Args&... args) { Derived::Postfix(st, args...); }) {
+                statePost = [](const DreamPatchState& st, Args&... args) { Derived::Postfix(st, args...); };
+            } else if constexpr (requires(Args&... args) { Derived::Postfix(args...); }) {
+                post = [](Args&... args) { Derived::Postfix(args...); };
+            }
+            pipe.AddSubscriber(name, priority, (void*)&s_autoRegister, pfx, post, statePfx, statePost);
         } else {
-            typename CentralHookPipeline<Ret, Args...>::PostfixFn post = [](Ret& result, Args&... args) {
-                if constexpr (requires { Derived::Postfix(result, args...); }) {
-                    Derived::Postfix(result, args...);
-                } else if constexpr (requires { Derived::Postfix(args...); }) {
-                    Derived::Postfix(args...);
-                }
-            };
-            pipe.AddSubscriber(name, priority, (void*)&s_autoRegister, pfx, post);
+            typename CentralHookPipeline<Ret, Args...>::PostfixFn post = nullptr;
+            typename CentralHookPipeline<Ret, Args...>::StatePostfixFn statePost = nullptr;
+
+            if constexpr (requires(const DreamPatchState& st, Ret& result, Args&... args) { Derived::Postfix(st, result, args...); }) {
+                statePost = [](const DreamPatchState& st, Ret& result, Args&... args) { Derived::Postfix(st, result, args...); };
+            } else if constexpr (requires(const DreamPatchState& st, Args&... args) { Derived::Postfix(st, args...); }) {
+                statePost = [](const DreamPatchState& st, Ret&, Args&... args) { Derived::Postfix(st, args...); };
+            } else if constexpr (requires(Ret& result, Args&... args) { Derived::Postfix(result, args...); }) {
+                post = [](Ret& result, Args&... args) { Derived::Postfix(result, args...); };
+            } else if constexpr (requires(Args&... args) { Derived::Postfix(args...); }) {
+                post = [](Ret&, Args&... args) { Derived::Postfix(args...); };
+            }
+            pipe.AddSubscriber(name, priority, (void*)&s_autoRegister, pfx, post, statePfx, statePost);
         }
 
         // Install underlying master hook once

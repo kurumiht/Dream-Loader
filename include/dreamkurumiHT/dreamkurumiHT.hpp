@@ -85,6 +85,7 @@
 #include "DreamEventContext.hpp"
 #include "DreamLoopRecovery.hpp"
 #include "DreamServerTelemetry.hpp"
+#include "DreamSessionSync.hpp"
 
 namespace dreamkurumi {
 namespace detail {

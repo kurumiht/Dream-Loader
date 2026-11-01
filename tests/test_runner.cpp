@@ -142,6 +142,24 @@ DREAM_HARMONY_PATCH(AutoRegisteredPatch, "AutoFunc", 0, int, int) {
 };
 DREAM_REGISTER_PATCH(AutoRegisteredPatch);
 
+// ============================================================================
+// Harmony Patch with State Sharing (__state): Prefix sets state, Postfix reads
+// ============================================================================
+__attribute__((noinline, noclone)) int TargetFunction_ComputeWithState(int x, int y) {
+    asm volatile("" : "+r"(x), "+r"(y));
+    return x * y;
+}
+
+DREAM_DECLARE_PATCH(StateSharingPatch, int, int, int) {
+    static bool Prefix(dreamkurumi::DreamPatchState& state, int x, int y) {
+        state.Set<int>(x + y); // Save sum into state
+        return true;
+    }
+    static void Postfix(const dreamkurumi::DreamPatchState& state, int& result, int x, int y) {
+        result += state.Get<int>(); // Add saved sum to product
+    }
+};
+
 __attribute__((noinline, noclone)) int SampleVehFunction() {
     volatile int x = 42;
     return x;
@@ -2121,8 +2139,16 @@ int main() {
     {
         std::cout << "[Test 55] Item 7: Native In-Game ImGui Diagnostic Overlay Verification...\n";
         auto& diagOverlay = dreamkurumi::DreamDiagnosticOverlay::Instance();
+        
+        // Default state should be disabled (F9 HUD inactive by default)
+        diagOverlay.SetEnabled(false);
         diagOverlay.SetVisible(false);
         assert(!diagOverlay.IsVisible());
+        diagOverlay.Toggle();
+        assert(!diagOverlay.IsVisible()); // Should remain hidden when disabled
+
+        // Enable overlay and verify toggle works
+        diagOverlay.SetEnabled(true);
         diagOverlay.Toggle();
         assert(diagOverlay.IsVisible());
         diagOverlay.RegisterHook("PlayerHarvestHook", 0x7FF700010000, "MidHook");
@@ -2135,6 +2161,10 @@ int main() {
         assert(diagReport.find("PlayerHarvestHook") != std::string::npos);
         assert(diagReport.find("144.0") != std::string::npos);
         assert(diagReport.find("AoE Harvest Radius") != std::string::npos);
+
+        // Cleanup: disable and hide
+        diagOverlay.SetVisible(false);
+        diagOverlay.SetEnabled(false);
         std::cout << "  Diagnostic overlay toggle, hook tracking and report generation -> [PASS]\n";
         std::cout << "  [PASS] Item 7 (Diagnostic Overlay) verified!\n\n";
     }
@@ -3941,6 +3971,401 @@ int main() {
         std::cout << "  [PASS] Test 92 (Scheduler Budget Preservation & Telemetry Grouping) fully verified!\n\n";
     }
 
+    {
+        std::cout << "[TEST 93] Testing ScopedThreadFreeze IP Mapping, Voxel Terraforming & Disasm Call Guards...\n";
+        
+        // 1. Test ScopedThreadFreeze::TranslateIp with DreamIpMap
+        dreamkurumi::DreamIpMap ipMap[2] = {
+            { 0, 0 },
+            { 5, 8 }
+        };
+        uintptr_t translated = 0;
+        bool mapOk = dreamkurumi::ScopedThreadFreeze::TranslateIp(0x1005, 0x1000, 14, 0x2000, ipMap, 2, translated);
+        assert(mapOk);
+        assert(translated == 0x2008);
+
+        // Intra-instruction translation (stopped midway within second instruction, e.g. +7 -> orig 5 + intra 2)
+        bool intraOk = dreamkurumi::ScopedThreadFreeze::TranslateIp(0x1007, 0x1000, 14, 0x2000, ipMap, 2, translated);
+        assert(intraOk);
+        assert(translated == 0x200A); // 0x2000 + tramp(8) + intra(2)
+
+        // 2. Test DreamVoxelEngine::SetTerrainSphere single-lock batching
+        auto& voxelEngine = dreamkurumi::DreamVoxelEngine::Instance();
+        size_t terraformed = voxelEngine.SetTerrainSphere(10.0f, 10.0f, 10.0f, 2.5f, dreamkurumi::VoxelMaterialType::Stone);
+        assert(terraformed > 0);
+        auto voxel = voxelEngine.QueryVoxel(10, 10, 10);
+        assert(voxel.material == dreamkurumi::VoxelMaterialType::Stone);
+        assert(voxel.isSolid == true);
+
+        // 3. Test DreamDisasm::IsCall rejection opcode coverage
+        assert(dreamkurumi::DreamDisasm::IsCall(0xE8, 0) == true);
+        assert(dreamkurumi::DreamDisasm::IsCall(0xFF, 2) == true); // FF /2 (call reg/mem)
+        assert(dreamkurumi::DreamDisasm::IsCall(0xFF, 3) == true); // FF /3 (call far)
+        assert(dreamkurumi::DreamDisasm::IsCall(0xFF, 4) == false); // FF /4 (jmp)
+        assert(dreamkurumi::DreamDisasm::IsCall(0x90, 0) == false); // NOP
+
+        std::cout << "  ScopedThreadFreeze TranslateIp exact & intra-instruction relocation -> [PASS]\n";
+        std::cout << "  DreamVoxelEngine SetTerrainSphere batched single-lock terraform -> [PASS]\n";
+        std::cout << "  DreamDisasm::IsCall instruction rejection coverage (0xE8, FF /2, FF /3) -> [PASS]\n";
+        std::cout << "  [PASS] Test 93 (Thread Freeze IP Map, Voxel Single-Lock & Disasm Guards) fully verified!\n\n";
+    }
+
+    {
+        std::cout << "[TEST 94] Testing Harmony State Sharing (__state), SIMD Scanner & Annotated Disasm Dump...\n";
+
+        // 1. Harmony State Sharing (__state) between Prefix and Postfix
+        bool stateHookInstalled = StateSharingPatch::Install(reinterpret_cast<void*>(TargetFunction_ComputeWithState));
+        assert(stateHookInstalled);
+
+        // TargetFunction_ComputeWithState(3, 4):
+        // Original: 3 * 4 = 12
+        // Prefix: state.Set<int>(3 + 4 = 7)
+        // Postfix: result += state.Get<int>() (12 + 7 = 19)
+        auto pfnCompute = TargetFunction_ComputeWithState;
+        asm volatile("" : "+r"(pfnCompute));
+        int stateResult = pfnCompute(3, 4);
+        assert(stateResult == 19);
+
+        StateSharingPatch::Disable();
+        int normalResult = pfnCompute(3, 4);
+        assert(normalResult == 12);
+        std::cout << "  Harmony State Sharing (__state) context transfer Prefix -> Postfix -> [PASS]\n";
+
+        // 2. Vectorized Pattern Scanner with wildcard
+        uint8_t memoryChunk[128];
+        for (int i = 0; i < 128; ++i) memoryChunk[i] = static_cast<uint8_t>(i);
+        // Plant target sequence at offset 48
+        memoryChunk[48] = 0x48;
+        memoryChunk[49] = 0x89;
+        memoryChunk[50] = 0x5C;
+        memoryChunk[51] = 0x24;
+        memoryChunk[52] = 0x08;
+
+        void* found = dreamkurumi::DreamScanner::FindPattern("48 89 ?? 24 08", memoryChunk, sizeof(memoryChunk));
+        assert(found == &memoryChunk[48]);
+        std::cout << "  Vectorized SIMD AOB Scanner with wildcard matching -> [PASS]\n";
+
+        // 3. Annotated Disassembly Dumper
+        uint8_t sampleCode[16] = {
+            0xE8, 0x00, 0x00, 0x00, 0x00, // call +5
+            0x90,                         // nop
+            0xC3,                         // ret
+            0xEB, 0x02,                   // jmp +2
+            0x90, 0x90,
+            0xCC, 0xCC, 0xCC, 0xCC, 0xCC
+        };
+        std::string dumpStr = dreamkurumi::DreamDisasm::DumpAnnotatedDisassembly(sampleCode, sizeof(sampleCode), 0, "Test Call Highlight");
+        assert(!dumpStr.empty());
+        assert(dumpStr.find("[CALL]") != std::string::npos);
+        assert(dumpStr.find("[NOP]") != std::string::npos);
+        assert(dumpStr.find("[TERM]") != std::string::npos);
+        assert(dumpStr.find("Test Call Highlight") != std::string::npos);
+        std::cout << "  DreamDisasm::DumpAnnotatedDisassembly instruction annotation & semantic tags -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 94 (State Sharing, SIMD Scanner & Annotated Disasm Dump) fully verified!\n\n";
+    }
+
+    {
+        std::cout << "[TEST 95] Testing ServerSync Mod Version Handshake Gate & Server-Enforced Configs...\n";
+        auto& sync = dreamkurumi::DreamServerSync::Instance();
+        auto& config = dreamkurumi::DreamLiveConfig::Instance();
+
+        // 1. Semantic Version Comparator
+        assert(dreamkurumi::DreamServerSync::CompareVersions("1.4.0", "1.5.0") < 0);
+        assert(dreamkurumi::DreamServerSync::CompareVersions("1.5.0", "1.4.0") > 0);
+        assert(dreamkurumi::DreamServerSync::CompareVersions("1.4.0", "1.4.0") == 0);
+        assert(dreamkurumi::DreamServerSync::CompareVersions("2.0.0", "1.9.9") > 0);
+        std::cout << "  Semantic version comparator (maj.min.patch) -> [PASS]\n";
+
+        // 2. Server Configuration Setup
+        sync.RequireMod("Dream-AoE-Harvest", "1.4.0");
+        sync.RequireMod("Dream-Auto-Pickup", "1.5.0");
+        sync.SetEnforcedConfig("aoe_harvest.radius", "3.5");
+
+        // Case A: Outdated Core Rejection
+        auto respOutdated = sync.EvaluateHandshake(0x00020000, { {"Dream-AoE-Harvest", "1.4.0"}, {"Dream-Auto-Pickup", "1.5.0"} });
+        assert(respOutdated.status == dreamkurumi::HandshakeStatus::RejectedOutdatedCore);
+
+        // Case B: Missing Mod Rejection
+        auto respMissing = sync.EvaluateHandshake(0x00030900, { {"Dream-AoE-Harvest", "1.4.0"} });
+        assert(respMissing.status == dreamkurumi::HandshakeStatus::RejectedMissingMod);
+
+        // Case C: Mismatched Version Rejection
+        auto respMismatch = sync.EvaluateHandshake(0x00030900, { {"Dream-AoE-Harvest", "1.3.0"}, {"Dream-Auto-Pickup", "1.5.0"} });
+        assert(respMismatch.status == dreamkurumi::HandshakeStatus::RejectedMismatch);
+
+        // Case D: Valid Handshake Acceptance
+        auto respValid = sync.EvaluateHandshake(0x00030900, { {"Dream-AoE-Harvest", "1.4.0"}, {"Dream-Auto-Pickup", "1.5.0"} });
+        assert(respValid.status == dreamkurumi::HandshakeStatus::Accepted);
+        assert(respValid.enforcedConfigs.find("aoe_harvest.radius") != respValid.enforcedConfigs.end());
+        std::cout << "  Dedicated Server Handshake validation (Core, Missing, Mismatch, Accepted) -> [PASS]\n";
+
+        // 3. Client Memory Config Locking & Rejection of Client Mutations
+        config.RegisterFloat("aoe_harvest.radius", 10.0f, "AoE Harvest Radius");
+        assert(config.GetFloat("aoe_harvest.radius") == 10.0f);
+        assert(!config.IsServerEnforced("aoe_harvest.radius"));
+
+        // Simulate server response packet payload
+        dreamkurumi::NetBufferWriter writer;
+        writer.WriteUInt8(static_cast<uint8_t>(respValid.status));
+        writer.WriteString(respValid.rejectReason);
+        writer.WriteUInt32(static_cast<uint32_t>(respValid.enforcedConfigs.size()));
+        for (const auto& [k, v] : respValid.enforcedConfigs) {
+            writer.WriteString(k);
+            writer.WriteString(v);
+        }
+
+        dreamkurumi::NetPacket pkt;
+        pkt.channelHash = dreamkurumi::DreamServerSync::SYNC_CHANNEL;
+        pkt.opcode = dreamkurumi::DreamServerSync::OPCODE_HANDSHAKE_RESP;
+        pkt.payload = writer.GetBuffer();
+
+        sync.HandleHandshakeResponse(pkt);
+        assert(sync.IsHandshakeAccepted());
+        assert(config.IsServerEnforced("aoe_harvest.radius"));
+        assert(config.GetFloat("aoe_harvest.radius") == 3.5f);
+
+        // Client attempts to cheat / override locked value -> Must be rejected!
+        bool mutateOk = config.Set("aoe_harvest.radius", "100.0");
+        assert(!mutateOk);
+        assert(config.GetFloat("aoe_harvest.radius") == 3.5f);
+        std::cout << "  Server-Enforced Config Memory Lock & client cheat override rejection -> [PASS]\n";
+
+        // 4. Disconnect from Server -> Restores local saved value!
+        sync.OnDisconnectedFromServer();
+        assert(!config.IsServerEnforced("aoe_harvest.radius"));
+        assert(config.GetFloat("aoe_harvest.radius") == 10.0f);
+        std::cout << "  Server disconnect auto-unlock & local saved value restoration -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 95 (ServerSync Handshake Gate & Enforced Config Lock) fully verified!\n\n";
+    }
+
+    // ========================================================================
+    // [TEST 96] Codebase Hardening: NetBufferReader, ConfigEntry Lock Sync,
+    //            TOML Backslashes, Disasm Underflow Guards & Exception TLS Safety
+    // ========================================================================
+    {
+        std::cout << "[TEST 96] Testing Codebase Hardening (NetBufferReader Error Latching, ConfigEntry Server Lock Sync, TOML Escapes & VEH Page Guards)...\n";
+
+        // 1. NetBufferReader Error Latching & Bounds Protection
+        std::vector<uint8_t> shortBuf = { 0x01, 0x02 };
+        dreamkurumi::NetBufferReader reader(shortBuf);
+        uint8_t b1 = reader.ReadUInt8();
+        uint8_t b2 = reader.ReadUInt8();
+        assert(b1 == 0x01 && b2 == 0x02);
+        assert(!reader.HasError());
+
+        // Read past end -> Must latch error!
+        uint32_t b3 = reader.ReadUInt32();
+        assert(b3 == 0);
+        assert(reader.HasError());
+        reader.ClearError();
+        assert(!reader.HasError());
+
+        // String truncation error latching
+        std::vector<uint8_t> truncatedStrBuf = { 0x0A, 0x00, 'A', 'B' }; // Declares len=10, only has 2 bytes
+        dreamkurumi::NetBufferReader strReader(truncatedStrBuf);
+        std::string s = strReader.ReadString();
+        assert(s.empty());
+        assert(strReader.HasError());
+        std::cout << "  NetBufferReader Out-of-Bounds & Truncated String Error Latching -> [PASS]\n";
+
+        // 2. ConfigEntry Server-Enforced Memory Lock Sync (Anti-Tamper)
+        auto& config = dreamkurumi::DreamLiveConfig::Instance();
+        auto radiusEntry = config.Bind("AuditTest", "HardenedRadius", 5.0f, "Test radius");
+        assert(radiusEntry.Get() == 5.0f);
+
+        // Dedicated Server enforces lock to 3.5
+        config.LockByServer("audittest.hardenedradius", "3.5");
+        assert(radiusEntry.Get() == 3.5f);
+
+        // Mod attempts to bypass server lock via local ConfigEntry::Set(100.0f)
+        radiusEntry.Set(100.0f);
+        // Must reject local modification and remain locked to 3.5!
+        assert(radiusEntry.Get() == 3.5f);
+        assert(config.GetFloat("audittest.hardenedradius") == 3.5f);
+        std::cout << "  ConfigEntry Server-Enforced Anti-Tamper Sync -> [PASS]\n";
+
+        // Server unlocks config -> Mod can now freely adjust
+        config.UnlockAllServerConfigs();
+        assert(!config.IsServerEnforced("audittest.hardenedradius"));
+        radiusEntry.Set(8.0f);
+        assert(radiusEntry.Get() == 8.0f);
+        std::cout << "  ConfigEntry Post-Unlock Mutation -> [PASS]\n";
+
+        // 3. DreamToml Backslash & String Escape Standards
+        dreamkurumi::DreamToml toml;
+        std::string tomlContent = 
+            "[Paths]\n"
+            "game_dir = \"H:\\\\Games\\\\Enshrouded\\\\\" # Trailing backslash directory path\n"
+            "message = \"He said \\\"Hello!\\\"\\nNext line\" ; Quoted string with newline\n"
+            "literal = 'No \\\\ escape here'\n";
+        bool parseOk = toml.ParseString(tomlContent);
+        assert(parseOk);
+        assert(toml.HasKey("Paths", "game_dir"));
+        assert(toml.GetString("Paths", "game_dir") == "H:\\Games\\Enshrouded\\");
+        assert(toml.GetString("Paths", "message") == "He said \"Hello!\"\nNext line");
+        assert(toml.GetString("Paths", "literal") == "No \\\\ escape here");
+        std::cout << "  DreamToml Backslash Path & TOML String Unescape Standards -> [PASS]\n";
+
+        // 4. DreamDisasm Underflow & Bounds Guard
+        uint8_t malformedOpcodes[] = { 0x48, 0x8B, 0x05, 0x00 }; // Short partial instruction
+        auto decoded = dreamkurumi::DreamDisasm::Decode(malformedOpcodes);
+        // dispOffset must never underflow to > 15
+        assert(decoded.dispOffset <= 15);
+        assert(decoded.immOffset <= 15);
+        std::cout << "  DreamDisasm Displacement & Immediate Underflow Guards -> [PASS]\n";
+
+        // 5. Deterministic Subscriber Ordering (stable_sort FIFO)
+        dreamkurumi::HookPipeline<int, int> pipeline;
+        std::vector<int> execOrder;
+        pipeline.AddPrefix("ModA", dreamkurumi::HookPriority::Normal, [&](int& val) {
+            execOrder.push_back(1);
+            return true;
+        });
+        pipeline.AddPrefix("ModB", dreamkurumi::HookPriority::Normal, [&](int& val) {
+            execOrder.push_back(2);
+            return true;
+        });
+        pipeline.AddPrefix("ModC", dreamkurumi::HookPriority::Normal, [&](int& val) {
+            execOrder.push_back(3);
+            return true;
+        });
+
+        int testVal = 42;
+        pipeline.Dispatch([](int x) { return x; }, testVal);
+        assert(execOrder.size() == 3);
+        assert(execOrder[0] == 1 && execOrder[1] == 2 && execOrder[2] == 3);
+        std::cout << "  Deterministic Subscriber FIFO Dispatch Ordering (std::stable_sort) -> [PASS]\n";
+
+        // 6. DreamCrashGuard C++ Exception & TLS Pointer Safety
+        bool exceptionCaught = false;
+        try {
+            dreamkurumi::DreamCrashGuard::ExecuteSafely("ExceptionMod", [&]() {
+                throw std::runtime_error("Simulated C++ exception inside mod sandbox");
+            });
+        } catch (const std::exception& e) {
+            exceptionCaught = true;
+        }
+        assert(exceptionCaught); // Must propagate exception cleanly to caller
+        // Ensure TLS slot was safely cleaned up and does not point to a dead stack frame
+        DWORD tlsIdx = dreamkurumi::DreamCrashGuard::GetTlsIndex();
+        void* tlsPtr = TlsGetValue(tlsIdx);
+        assert(tlsPtr == nullptr); // Re-assert clean TLS state
+        std::cout << "  DreamCrashGuard C++ Exception Catch & TLS Pointer Safety -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 96 (Codebase Hardening & Audit Fixes) fully verified!\n\n";
+    }
+
+    // ========================================================================
+    // [TEST 97] ServerSessionEpoch (SSE) & ECS Auto-Resync Architecture (v3.9.0 v1.7)
+    // ========================================================================
+    {
+        std::cout << "[Test 97] Testing ServerSessionEpoch & Auto-Resync Safe Mode Protocol (v3.9.0 v1.7)...\n";
+
+        auto& sessionSync = dreamkurumi::DreamSessionSync::Instance();
+
+        // 1. Monotonic Server Epoch Generation
+        sessionSync.InitializeServerEpoch();
+        uint64_t epoch1 = sessionSync.GetServerSessionEpoch();
+        assert(epoch1 > 0);
+        uint64_t expectedPidHigh = (static_cast<uint64_t>(GetCurrentProcessId()) & 0xFFFFULL) << 48;
+        assert((epoch1 & 0xFFFF000000000000ULL) == expectedPidHigh);
+        assert(!sessionSync.IsSessionStale());
+        std::cout << "  Monotonic Server Session Epoch generation & PID bitmask -> [PASS]\n";
+
+        // 2. Callback Registration & Server Reboot Detection
+        int callbackFiredCount = 0;
+        auto testCb = [](uint64_t oldEp, uint64_t newEp, void* ud) {
+            (void)oldEp;
+            (void)newEp;
+            auto* pCount = reinterpret_cast<int*>(ud);
+            if (pCount) (*pCount)++;
+        };
+
+        bool regOk = sessionSync.RegisterSessionResetCallback(testCb, &callbackFiredCount);
+        assert(regOk);
+
+        // Simulate dedicated server rebooting with new PID and fresh ticks
+        uint64_t rebootEpoch = 0x9999888877776666ULL;
+        sessionSync.OnReceiveServerEpoch(rebootEpoch, 5678, 1);
+
+        assert(sessionSync.GetServerSessionEpoch() == rebootEpoch);
+        assert(sessionSync.IsSessionStale() == true);
+        assert(callbackFiredCount == 1);
+        std::cout << "  Server reboot detection, Safe-Mode activation & C-ABI callback notification -> [PASS]\n";
+
+        // 3. Safe Mode Cache Invalidation and Resync Recovery
+        sessionSync.NotifyResyncComplete();
+        assert(sessionSync.IsSessionStale() == false);
+        std::cout << "  NotifyResyncComplete() state reset & safe pipeline restoration -> [PASS]\n";
+
+        // 4. Unregister Callback Verification
+        bool unregOk = sessionSync.UnregisterSessionResetCallback(testCb);
+        assert(unregOk);
+
+        // Another reboot shouldn't fire the unregistered callback
+        uint64_t rebootEpoch2 = 0xAAAA5555AAAA5555ULL;
+        sessionSync.OnReceiveServerEpoch(rebootEpoch2, 9999, 1);
+        assert(callbackFiredCount == 1); // Remains 1
+        assert(sessionSync.IsSessionStale() == true);
+        sessionSync.NotifyResyncComplete(); // Clean up
+
+        std::cout << "  Unregister callback & safe epoch transition -> [PASS]\n";
+        std::cout << "  [PASS] Test 97 (ServerSessionEpoch & Auto-Resync) fully verified!\n\n";
+    }
+
+    // ========================================================================
+    // [TEST 98] Heartbeat Watchdog, Dangling Callback Pruning & Zero-Touch Resync (v3.9.0 v1.8)
+    // ========================================================================
+    {
+        std::cout << "[Test 98] Testing Heartbeat Timeout, Dangling Callback Pruning & Zero-Touch Resync (v3.9.0 v1.8)...\n";
+
+        auto& sessionSync = dreamkurumi::DreamSessionSync::Instance();
+
+        // 1. Heartbeat Watchdog Timeout
+        uint64_t currentEp = sessionSync.GetServerSessionEpoch();
+        sessionSync.OnReceiveServerEpoch(currentEp, 1000, 50);
+        assert(sessionSync.IsHeartbeatAlive());
+        assert(!sessionSync.IsSessionStale());
+        std::cout << "  Heartbeat receipt and active alive state -> [PASS]\n";
+
+        // 2. Dangling Callback Pruning (Hot-Reload Safety)
+        size_t initialCount = sessionSync.GetCallbackCount();
+        auto deadCb = reinterpret_cast<dreamkurumi::DK_SessionResetCallback>(0xDEADBEEF0000ULL);
+        sessionSync.RegisterSessionResetCallback(deadCb, nullptr);
+        assert(sessionSync.GetCallbackCount() == initialCount + 1);
+
+        // Invoking reset callbacks safely should detect invalid code pointer and prune it
+        sessionSync.InvokeResetCallbacksSafely(0x1111ULL, 0x2222ULL);
+        assert(sessionSync.GetCallbackCount() == initialCount);
+        std::cout << "  Dangling / Unloaded DLL callback detection and safe pruning -> [PASS]\n";
+
+        // 3. 64-bit RPC Frame Packing & Full 64-bit Hash
+        uint64_t fullHash64 = 0xABCD1234EF567890ULL;
+        uint8_t outBuf[128] = {0};
+        const uint8_t testPayload[] = { 0x01, 0x02, 0x03, 0x04 };
+        uint32_t packedSize = DK_Rpc_PackFrame64(1, 2, fullHash64, testPayload, sizeof(testPayload), outBuf, sizeof(outBuf));
+        assert(packedSize >= 28 + sizeof(testPayload));
+
+        // Read back packed rpcHash from frame (header offset 0x10 is uint64_t rpcHash in V2)
+        uint64_t extractedHash = *reinterpret_cast<const uint64_t*>(outBuf + 16);
+        assert(extractedHash == fullHash64);
+        std::cout << "  DK_Rpc_PackFrame64 64-bit RPC hash preservation -> [PASS]\n";
+
+        // 4. DK_GetEntityByHandle Null/Boundary Safety
+        void* ent = DK_GetEntityByHandle(nullptr, 0x0000000100000042ULL);
+        assert(ent == nullptr);
+        std::cout << "  DK_GetEntityByHandle 64-bit boundary validation -> [PASS]\n";
+
+        // 5. Zero-Touch Auto-Resync Verification
+        sessionSync.NotifyResyncComplete();
+        assert(!sessionSync.IsSessionStale());
+        std::cout << "  Zero-Touch Auto-Resync restoration -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 98 (Heartbeat Watchdog & Zero-Touch Resync) fully verified!\n\n";
+    }
+
     // Cleanly stop any background singletons before process exit
     dreamkurumi::DreamToast::Instance().Shutdown();
     dreamkurumi::DreamWatchdog::Instance().Stop();
@@ -3950,7 +4375,7 @@ int main() {
     dreamkurumi::DreamCrashGuard::Shutdown();
 
     std::cout << "============================================================\n";
-    std::cout << " ALL 92 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
+    std::cout << " ALL 98 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
     std::cout << "============================================================\n" << std::flush;
 
     TerminateProcess(GetCurrentProcess(), 0);

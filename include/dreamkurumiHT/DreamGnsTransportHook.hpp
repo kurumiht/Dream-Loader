@@ -6,6 +6,8 @@
 #include "DreamRpcMultiplexer.hpp"
 #include "DreamLog.hpp"
 #include "DreamNetStateTracker.hpp"
+#include "DreamHook.hpp"
+#include "DreamEnv.hpp"
 
 namespace dreamkurumi {
 
@@ -66,6 +68,11 @@ class DreamGnsTransportHook {
 private:
     static inline std::atomic<uint64_t> s_lastMessageTimeMs{0};
     static inline std::atomic<bool> s_hasActiveConnection{false};
+    static inline std::atomic<bool> s_hooksInstalled{false};
+
+    static inline void* s_origGetConnectionRealTimeStatus{nullptr};
+    static inline DreamInlineHook s_hookReceive;
+    static inline DreamInlineHook s_hookClose;
 
 public:
     static bool IsConnected() noexcept {
@@ -86,6 +93,87 @@ public:
         s_hasActiveConnection.store(true, std::memory_order_relaxed);
         s_lastMessageTimeMs.store(GetTickCount64(), std::memory_order_relaxed);
         DreamNetStateTracker::Instance().RecordPacketActivity(connId);
+    }
+
+    // Dynamic SteamNetworkingSockets interceptor
+    static bool InstallHooks() {
+        if (s_hooksInstalled.load()) return true;
+
+        HMODULE hSteamApi = GetModuleHandleW(L"steam_api64.dll");
+        if (!hSteamApi) return false;
+
+        void* pfnReceive = reinterpret_cast<void*>(GetProcAddress(hSteamApi, "SteamAPI_ISteamNetworkingSockets_ReceiveMessagesOnConnection"));
+        void* pfnStatus  = reinterpret_cast<void*>(GetProcAddress(hSteamApi, "SteamAPI_ISteamNetworkingSockets_GetConnectionRealTimeStatus"));
+        void* pfnClose   = reinterpret_cast<void*>(GetProcAddress(hSteamApi, "SteamAPI_ISteamNetworkingSockets_CloseConnection"));
+
+        if (pfnStatus) {
+            s_origGetConnectionRealTimeStatus = pfnStatus;
+        }
+
+        bool ok = false;
+        if (pfnReceive && !s_hookReceive.IsInstalled()) {
+            if (s_hookReceive.Install(pfnReceive, reinterpret_cast<void*>(&DetourReceiveMessagesOnConnection))) {
+                ok = true;
+                DREAM_LOG_INFO("DreamGnsTransportHook: Successfully hooked SteamAPI ReceiveMessagesOnConnection");
+            }
+        }
+        if (pfnClose && !s_hookClose.IsInstalled()) {
+            s_hookClose.Install(pfnClose, reinterpret_cast<void*>(&DetourCloseConnection));
+        }
+
+        if (ok) {
+            s_hooksInstalled.store(true);
+        }
+        return ok;
+    }
+
+    static void UninstallHooks() {
+        if (s_hookReceive.IsInstalled()) s_hookReceive.Disable();
+        if (s_hookClose.IsInstalled()) s_hookClose.Disable();
+        s_hooksInstalled.store(false);
+    }
+
+    static int DetourReceiveMessagesOnConnection(
+        void* self,
+        uint32_t hConn,
+        SteamNetworkingMessageMinimal** ppOutMessages,
+        int nMaxMessages)
+    {
+        using FnReceive = int (*)(void*, uint32_t, SteamNetworkingMessageMinimal**, int);
+        auto orig = reinterpret_cast<FnReceive>(s_hookReceive.GetOriginal());
+        int count = orig ? orig(self, hConn, ppOutMessages, nMaxMessages) : 0;
+
+        if (hConn != 0) {
+            RecordNetworkActivity(hConn);
+
+            if (s_origGetConnectionRealTimeStatus) {
+                using FnStatus = bool (*)(void*, uint32_t, void*, int, void*);
+                auto pfnStatus = reinterpret_cast<FnStatus>(s_origGetConnectionRealTimeStatus);
+                uint8_t statusBuf[128] = {0};
+                if (pfnStatus(self, hConn, statusBuf, 0, nullptr)) {
+                    int eState = *reinterpret_cast<int*>(statusBuf);
+                    int ping = *reinterpret_cast<int*>(statusBuf + 4);
+                    float quality = *reinterpret_cast<float*>(statusBuf + 8);
+                    DreamNetStateTracker::Instance().OnConnectionStateChanged(hConn, eState);
+                    DreamNetStateTracker::Instance().UpdateRealTimeMetrics(ping, (1.0f - quality) * 100.0f);
+                }
+            }
+        }
+
+        if (count > 0 && ppOutMessages) {
+            bool isServer = DreamEnv::IsDedicatedServer();
+            count = FilterAndDemuxIncomingMessages(ppOutMessages, count, isServer);
+        }
+
+        return count;
+    }
+
+    static bool DetourCloseConnection(void* self, uint32_t hConn, int nReason, const char* pszDebug, bool bEnableLinger) {
+        using FnClose = bool (*)(void*, uint32_t, int, const char*, bool);
+        auto orig = reinterpret_cast<FnClose>(s_hookClose.GetOriginal());
+        DreamNetStateTracker::Instance().OnConnectionStateChanged(hConn, 4); // Disconnected
+        if (orig) return orig(self, hConn, nReason, pszDebug, bEnableLinger);
+        return false;
     }
 
     // Filters and demultiplexes incoming messages obtained from ISteamNetworkingSockets::ReceiveMessagesOnConnection.

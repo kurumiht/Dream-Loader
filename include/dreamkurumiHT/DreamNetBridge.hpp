@@ -143,7 +143,10 @@ public:
         : m_data(buf.data()), m_size(buf.size()), m_offset(0) {}
 
     uint8_t ReadUInt8() {
-        if (m_offset + 1 > m_size) return 0;
+        if (m_offset + 1 > m_size) {
+            m_error = true;
+            return 0;
+        }
         return m_data[m_offset++];
     }
 
@@ -189,14 +192,22 @@ public:
 
     std::string ReadString() {
         uint16_t len = ReadUInt16();
-        if (len == 0 || m_offset + len > m_size) return "";
+        if (m_error) return "";
+        if (len == 0) return "";
+        if (m_offset + len > m_size) {
+            m_error = true;
+            return "";
+        }
         std::string str(reinterpret_cast<const char*>(m_data + m_offset), len);
         m_offset += len;
         return str;
     }
 
     bool ReadBytes(void* dest, size_t size) {
-        if (!dest || m_offset + size > m_size) return false;
+        if (!dest || m_offset + size > m_size) {
+            m_error = true;
+            return false;
+        }
         std::memcpy(dest, m_data + m_offset, size);
         m_offset += size;
         return true;
@@ -210,13 +221,24 @@ public:
         return m_offset >= m_size;
     }
 
+    bool HasError() const {
+        return m_error;
+    }
+
+    void ClearError() {
+        m_error = false;
+    }
+
     size_t GetOffset() const { return m_offset; }
 
 private:
     template <typename T>
     T ReadPod(T fallback) {
         static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable");
-        if (m_offset + sizeof(T) > m_size) return fallback;
+        if (m_offset + sizeof(T) > m_size) {
+            m_error = true;
+            return fallback;
+        }
         T val;
         std::memcpy(&val, m_data + m_offset, sizeof(T));
         m_offset += sizeof(T);
@@ -226,6 +248,7 @@ private:
     const uint8_t* m_data{nullptr};
     size_t m_size{0};
     size_t m_offset{0};
+    bool m_error{false};
 };
 
 // ============================================================================
@@ -410,6 +433,10 @@ private:
     bool DispatchPacket(const NetPacket& pkt) {
         m_totalPacketsSent++;
         if (m_loopbackEnabled) {
+            // Do not loop back dedicated server broadcasts to the server itself
+            if (DreamEnv::IsDedicatedServer() && pkt.senderId == 0 && pkt.targetId == 0xFFFFFFFF) {
+                return true;
+            }
             // Immediate local loopback dispatch
             DeliverPacket(pkt);
             return true;
@@ -428,20 +455,222 @@ private:
 
 // ============================================================================
 // DreamServerSync - Automated Dedicated Server -> Client Mod Config Synchronization
-// Allows dedicated server admins to broadcast and enforce server-side settings
-// (e.g. MaxLevel, XpMultiplier, ProhibitedCheats) directly to all client mods!
+// & Mod Version Handshake Gate (BepInEx ServerSync style)
 // ============================================================================
+enum class HandshakeStatus : uint8_t {
+    Accepted = 0,
+    RejectedMismatch = 1,
+    RejectedMissingMod = 2,
+    RejectedOutdatedCore = 3
+};
+
+struct ModRequirement {
+    std::string modName;
+    std::string minVersion;
+    std::string maxVersion;
+};
+
+struct ClientModInfo {
+    std::string modName;
+    std::string version;
+};
+
+struct HandshakeResponseData {
+    HandshakeStatus status{HandshakeStatus::Accepted};
+    std::string rejectReason;
+    std::unordered_map<std::string, std::string> enforcedConfigs;
+};
+
 class DreamServerSync {
 public:
     static constexpr uint64_t SYNC_CHANNEL = DreamHash::Hash("dream_server_sync");
     static constexpr uint16_t OPCODE_HANDSHAKE_SETTINGS = 0x0001;
+    static constexpr uint16_t OPCODE_HANDSHAKE_REQ      = 0x0002;
+    static constexpr uint16_t OPCODE_HANDSHAKE_RESP     = 0x0003;
+    static constexpr uint16_t OPCODE_CONFIG_LOCK        = 0x0004;
+    static constexpr uint16_t OPCODE_CONFIG_UNLOCK      = 0x0005;
+    static constexpr uint16_t OPCODE_SESSION_EPOCH_ANNOUNCE = 0x0010;
+    static constexpr uint16_t OPCODE_SESSION_EPOCH_QUERY    = 0x0011;
 
     static DreamServerSync& Instance() {
         static DreamServerSync s_instance;
         return s_instance;
     }
 
-    // Server-side: Register a variable to be synced to all connected clients
+    // Helper to compare semantic versions e.g. "1.4.0" vs "1.5.0"
+    static int CompareVersions(const std::string& v1, const std::string& v2) {
+        int maj1 = 0, min1 = 0, pat1 = 0;
+        int maj2 = 0, min2 = 0, pat2 = 0;
+        std::sscanf(v1.c_str(), "%d.%d.%d", &maj1, &min1, &pat1);
+        std::sscanf(v2.c_str(), "%d.%d.%d", &maj2, &min2, &pat2);
+        if (maj1 != maj2) return maj1 < maj2 ? -1 : 1;
+        if (min1 != min2) return min1 < min2 ? -1 : 1;
+        if (pat1 != pat2) return pat1 < pat2 ? -1 : 1;
+        return 0;
+    }
+
+    // ========================================================================
+    // Server-side: Required Mod Rules & Enforced Configs
+    // ========================================================================
+    void RequireMod(const std::string& modName, const std::string& minVersion, const std::string& maxVersion = "") {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_requirements[modName] = {modName, minVersion, maxVersion};
+        DREAM_LOG_INFO("DreamServerSync: Server requires mod '%s' (>= %s)", modName.c_str(), minVersion.c_str());
+    }
+
+    void SetEnforcedConfig(const std::string& key, const std::string& value) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_enforcedConfigs[key] = value;
+    }
+
+    void SetEnforcedConfig(const std::string& key, float value) {
+        SetEnforcedConfig(key, std::to_string(value));
+    }
+
+    void SetEnforcedConfig(const std::string& key, int value) {
+        SetEnforcedConfig(key, std::to_string(value));
+    }
+
+    HandshakeResponseData EvaluateHandshake(uint32_t clientCoreVersion, const std::vector<ClientModInfo>& clientMods) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        HandshakeResponseData resp;
+
+        // 1. Verify Core Version (minimum 3.9.0 = 0x00030900)
+        constexpr uint32_t MIN_CORE_VERSION = 0x00030900;
+        if (clientCoreVersion < MIN_CORE_VERSION) {
+            resp.status = HandshakeStatus::RejectedOutdatedCore;
+            resp.rejectReason = "Dream Core version outdated. Dedicated server requires >= 3.9.0";
+            return resp;
+        }
+
+        // 2. Check each required mod
+        std::unordered_map<std::string, std::string> clientModMap;
+        for (const auto& m : clientMods) {
+            clientModMap[m.modName] = m.version;
+        }
+
+        for (const auto& [reqName, req] : m_requirements) {
+            auto it = clientModMap.find(reqName);
+            if (it == clientModMap.end()) {
+                resp.status = HandshakeStatus::RejectedMissingMod;
+                resp.rejectReason = "Missing required mod: '" + reqName + "' (required >= " + req.minVersion + ")";
+                return resp;
+            }
+
+            if (!req.minVersion.empty() && CompareVersions(it->second, req.minVersion) < 0) {
+                resp.status = HandshakeStatus::RejectedMismatch;
+                resp.rejectReason = "Mod version mismatch for '" + reqName + "': server requires >= " +
+                                    req.minVersion + ", client has " + it->second;
+                return resp;
+            }
+
+            if (!req.maxVersion.empty() && CompareVersions(it->second, req.maxVersion) > 0) {
+                resp.status = HandshakeStatus::RejectedMismatch;
+                resp.rejectReason = "Mod version mismatch for '" + reqName + "': server requires <= " +
+                                    req.maxVersion + ", client has " + it->second;
+                return resp;
+            }
+        }
+
+        // 3. Accepted! Attach enforced configs
+        resp.status = HandshakeStatus::Accepted;
+        resp.enforcedConfigs = m_enforcedConfigs;
+        return resp;
+    }
+
+    // ========================================================================
+    // Client-side: Local Mod Registration & Handshake Evaluation
+    // ========================================================================
+    void RegisterLocalMod(const std::string& modName, const std::string& version) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_localMods[modName] = version;
+    }
+
+    NetBufferWriter BuildHandshakeRequest(uint32_t clientCoreVersion = 0x00030900) {
+        NetBufferWriter writer;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        writer.WriteUInt32(clientCoreVersion);
+        writer.WriteUInt32(static_cast<uint32_t>(m_localMods.size()));
+        for (const auto& [name, ver] : m_localMods) {
+            writer.WriteString(name);
+            writer.WriteString(ver);
+        }
+        return writer;
+    }
+
+    void HandleHandshakeResponse(const NetPacket& pkt) {
+        NetBufferReader reader(pkt.payload);
+        uint8_t rawStatus = reader.ReadUInt8();
+        auto status = static_cast<HandshakeStatus>(rawStatus);
+        std::string reason = reader.ReadString();
+
+        uint32_t configCount = reader.ReadUInt32();
+        std::unordered_map<std::string, std::string> enforced;
+        for (uint32_t i = 0; i < configCount; ++i) {
+            std::string k = reader.ReadString();
+            std::string v = reader.ReadString();
+            enforced[k] = v;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_handshakeAccepted = (status == HandshakeStatus::Accepted);
+            m_rejectionReason = reason;
+        }
+
+        if (status == HandshakeStatus::Accepted) {
+            DREAM_LOG_INFO("DreamServerSync: Dedicated Server accepted handshake. Applying %u enforced configs...", configCount);
+            for (const auto& [k, v] : enforced) {
+                if (s_configLocker) {
+                    s_configLocker(k, v);
+                }
+            }
+        } else {
+            DREAM_LOG_WARN("DreamServerSync: Handshake rejected by Dedicated Server: %s", reason.c_str());
+        }
+
+        if (m_onHandshakeCompleted) {
+            m_onHandshakeCompleted(status == HandshakeStatus::Accepted, reason);
+        }
+    }
+
+    bool IsHandshakeAccepted() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_handshakeAccepted;
+    }
+
+    std::string GetRejectionReason() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_rejectionReason;
+    }
+
+    void OnDisconnectedFromServer() {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_handshakeAccepted = false;
+            m_rejectionReason.clear();
+        }
+        if (s_configUnlocker) {
+            s_configUnlocker();
+        }
+        DREAM_LOG_INFO("DreamServerSync: Disconnected from Dedicated Server. Restored local configs.");
+    }
+
+    static void RegisterConfigLockHandler(
+        std::function<void(const std::string&, const std::string&)> locker,
+        std::function<void()> unlocker)
+    {
+        s_configLocker = locker;
+        s_configUnlocker = unlocker;
+    }
+
+    void SetOnHandshakeCompletedCallback(std::function<void(bool accepted, const std::string& reason)> cb) {
+        m_onHandshakeCompleted = cb;
+    }
+
+    // ========================================================================
+    // Legacy SyncVar APIs (Maintained for full backward compatibility)
+    // ========================================================================
     void SetSyncVar(const std::string& key, const std::string& value) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_syncedVars[key] = value;
@@ -455,7 +684,6 @@ public:
         SetSyncVar(key, std::to_string(value));
     }
 
-    // Client/Server: Retrieve synced variable
     std::string GetSyncVar(const std::string& key, const std::string& defaultVal = "") {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_syncedVars.find(key);
@@ -474,7 +702,6 @@ public:
         try { return std::stof(s); } catch (...) { return defaultVal; }
     }
 
-    // Server-side: Broadcast current server variables to all clients
     void BroadcastServerSettings() {
         NetBufferWriter writer;
         {
@@ -490,7 +717,6 @@ public:
                        m_syncedVars.size());
     }
 
-    // Client-side: Initialize network listener for server settings sync
     void InitializeClientListener() {
         DreamNetBridge::Instance().RegisterHandler(SYNC_CHANNEL, OPCODE_HANDSHAKE_SETTINGS, [this](const NetPacket& pkt) {
             NetBufferReader reader(pkt.payload);
@@ -508,6 +734,10 @@ public:
                 m_onSyncReceived();
             }
         });
+
+        DreamNetBridge::Instance().RegisterHandler(SYNC_CHANNEL, OPCODE_HANDSHAKE_RESP, [this](const NetPacket& pkt) {
+            HandleHandshakeResponse(pkt);
+        });
     }
 
     void SetOnSyncReceivedCallback(std::function<void()> cb) {
@@ -518,8 +748,18 @@ private:
     DreamServerSync() = default;
 
     std::unordered_map<std::string, std::string> m_syncedVars;
+    std::unordered_map<std::string, ModRequirement> m_requirements;
+    std::unordered_map<std::string, std::string> m_enforcedConfigs;
+    std::unordered_map<std::string, std::string> m_localMods;
+    bool m_handshakeAccepted{false};
+    std::string m_rejectionReason;
+
     std::function<void()> m_onSyncReceived;
-    std::mutex m_mutex;
+    std::function<void(bool, const std::string&)> m_onHandshakeCompleted;
+    mutable std::mutex m_mutex;
+
+    static inline std::function<void(const std::string&, const std::string&)> s_configLocker{nullptr};
+    static inline std::function<void()> s_configUnlocker{nullptr};
 };
 
 } // namespace dreamkurumi

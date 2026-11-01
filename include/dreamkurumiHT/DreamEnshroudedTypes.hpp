@@ -184,6 +184,13 @@ public:
         return m_pfnGetEntity(pContext, entityId);
     }
 
+    void* GetEntityByHandle(void* pContext, uint64_t entityHandle) {
+        if (!m_initialized) Initialize();
+        if (!m_pfnGetEntity || !pContext || entityHandle == 0) return nullptr;
+        using FnGetEntity64 = void* (*)(void*, uint64_t);
+        return reinterpret_cast<FnGetEntity64>(m_pfnGetEntity)(pContext, entityHandle);
+    }
+
     void* GetComponent(void* pEntity, uint16_t compId) {
         if (!m_initialized) Initialize();
         if (!m_pfnGetComp || !pEntity) return nullptr;

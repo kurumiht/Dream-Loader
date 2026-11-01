@@ -54,6 +54,7 @@
 #endif
 
 #include "DreamRawLog.hpp"
+#include "DreamCore.hpp"
 
 namespace dreamkurumi {
 
@@ -286,7 +287,7 @@ public:
     // OutputDebugString is slow with a debugger attached. Off by default.
     void SetDebugOutputEnabled(bool enabled) { m_debugOut.store(enabled, std::memory_order_relaxed); }
 
-    bool AllocateConsoleWindow(const char* title = "dreamkurumiHT Diagnostics Console (Client)") {
+    bool AllocateConsoleWindow(const char* title = "dreamkurumiHT Diagnostics Console v" DREAM_FRAMEWORK_VERSION " (Client)") {
         Init();
         std::lock_guard<std::mutex> lk(m_sinkMutex);
         if (m_consoleAllocated.load()) return true;
@@ -366,7 +367,7 @@ public:
 
         static const char banner[] =
             "\033[95m======================================================================\033[0m\n"
-            "\033[96m  dreamkurumiHT Diagnostics Console (Client Mode)\033[0m\n"
+            "\033[96m  dreamkurumiHT Diagnostics Console v" DREAM_FRAMEWORK_VERSION " (Client Mode)\033[0m\n"
             "\033[90m  Monitoring Enshrouded Hooks, LiveGameSettings & Crash Guard...\033[0m\n"
             "\033[93m  Tip: QuickEdit Enabled (Select & Press Enter to Copy) | F9 Menu\033[0m\n"
             "\033[95m======================================================================\033[0m\n\n";

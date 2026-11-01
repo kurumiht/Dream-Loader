@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <atomic>
 #include <string>
+#include <windows.h>
 
 namespace dreamkurumi {
 
@@ -87,6 +88,13 @@ public:
 
     bool IsConnected() const noexcept {
         return GetState() == EngineConnectionState::Connected;
+    }
+
+    bool IsClientConnectedToRemoteServer() const noexcept {
+        if (IsConnected()) return true;
+        uint64_t now = GetTickCount64();
+        uint64_t last = m_lastPacketTimeMs.load(std::memory_order_relaxed);
+        return (last != 0 && now >= last && (now - last) <= 10000);
     }
 
     int32_t GetPingMs() const noexcept {

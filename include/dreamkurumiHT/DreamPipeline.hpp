@@ -134,14 +134,14 @@ private:
     }
 
     void SortPrefixes() {
-        std::sort(m_prefixes.begin(), m_prefixes.end(),
+        std::stable_sort(m_prefixes.begin(), m_prefixes.end(),
             [](const auto& a, const auto& b) {
                 return static_cast<int>(a.priority) < static_cast<int>(b.priority);
             });
     }
 
     void SortPostfixes() {
-        std::sort(m_postfixes.begin(), m_postfixes.end(),
+        std::stable_sort(m_postfixes.begin(), m_postfixes.end(),
             [](const auto& a, const auto& b) {
                 return static_cast<int>(a.priority) < static_cast<int>(b.priority);
             });
@@ -251,14 +251,14 @@ private:
     }
 
     void SortPrefixes() {
-        std::sort(m_prefixes.begin(), m_prefixes.end(),
+        std::stable_sort(m_prefixes.begin(), m_prefixes.end(),
             [](const auto& a, const auto& b) {
                 return static_cast<int>(a.priority) < static_cast<int>(b.priority);
             });
     }
 
     void SortPostfixes() {
-        std::sort(m_postfixes.begin(), m_postfixes.end(),
+        std::stable_sort(m_postfixes.begin(), m_postfixes.end(),
             [](const auto& a, const auto& b) {
                 return static_cast<int>(a.priority) < static_cast<int>(b.priority);
             });

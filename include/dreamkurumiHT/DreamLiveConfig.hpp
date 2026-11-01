@@ -30,6 +30,8 @@ struct ConfigProperty {
     std::string valueStr;
     std::string description;
     std::vector<std::function<void(const std::string&)>> onChangeCallbacks;
+    bool isServerEnforced{false};
+    std::string localSavedValueStr;
 };
 
 // Forward declaration
@@ -259,6 +261,11 @@ public:
             auto it = m_props.find(lowerKey);
             if (it == m_props.end()) return false;
 
+            if (it->second.isServerEnforced) {
+                DREAM_LOG_WARN("DreamLiveConfig: Modification rejected for '%s' - value is locked by Dedicated Server", key.c_str());
+                return false;
+            }
+
             if (it->second.type == ConfigType::Bool) {
                 std::string lv = ToLower(valueStr);
                 finalVal = (lv == "true" || lv == "1" || lv == "on" || lv == "yes") ? "true" : "false";
@@ -273,6 +280,72 @@ public:
             }
         }
         return true;
+    }
+
+    bool IsServerEnforced(const std::string& key) const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        std::string lowerKey = ToLower(key);
+        auto it = m_props.find(lowerKey);
+        return (it != m_props.end() && it->second.isServerEnforced);
+    }
+
+    bool LockByServer(const std::string& key, const std::string& enforcedValue) {
+        std::vector<std::function<void(const std::string&)>> callbacks;
+        std::string finalVal = enforcedValue;
+
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            std::string lowerKey = ToLower(key);
+            auto it = m_props.find(lowerKey);
+            if (it == m_props.end()) return false;
+
+            if (!it->second.isServerEnforced) {
+                it->second.localSavedValueStr = it->second.valueStr;
+                it->second.isServerEnforced = true;
+            }
+
+            if (it->second.type == ConfigType::Bool) {
+                std::string lv = ToLower(enforcedValue);
+                finalVal = (lv == "true" || lv == "1" || lv == "on" || lv == "yes") ? "true" : "false";
+            }
+            it->second.valueStr = finalVal;
+            callbacks = it->second.onChangeCallbacks;
+        }
+
+        for (const auto& cb : callbacks) {
+            if (cb) {
+                try { cb(finalVal); } catch (...) {}
+            }
+        }
+        DREAM_LOG_INFO("DreamLiveConfig: Config '%s' locked by Dedicated Server to '%s'", key.c_str(), finalVal.c_str());
+        return true;
+    }
+
+    void UnlockAllServerConfigs() {
+        std::vector<std::pair<std::vector<std::function<void(const std::string&)>>, std::string>> pendingCallbacks;
+
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (auto& [k, prop] : m_props) {
+                if (prop.isServerEnforced) {
+                    prop.isServerEnforced = false;
+                    if (!prop.localSavedValueStr.empty()) {
+                        prop.valueStr = prop.localSavedValueStr;
+                        prop.localSavedValueStr.clear();
+                        pendingCallbacks.push_back({prop.onChangeCallbacks, prop.valueStr});
+                    }
+                }
+            }
+        }
+
+        for (const auto& [cbs, val] : pendingCallbacks) {
+            for (const auto& cb : cbs) {
+                if (cb) {
+                    try { cb(val); } catch (...) {}
+                }
+            }
+        }
+        DREAM_LOG_INFO("DreamLiveConfig: All server-enforced configs unlocked, restored local values");
     }
 
     std::string Get(const std::string& key) const {
@@ -342,7 +415,7 @@ public:
 
                 // [Diagnostics]
                 if (toml.HasSection("Diagnostics")) {
-                    bool enableHud = toml.GetBool("Diagnostics", "EnableDiagnosticsHUD", true);
+                    bool enableHud = toml.GetBool("Diagnostics", "EnableDiagnosticsHUD", false);
                     Set("diagnostics.enabled", enableHud ? "true" : "false");
                     int hotkey = toml.GetInt("Diagnostics", "DiagnosticsHotkey", 0x78);
                     Set("diagnostics.hotkey", std::to_string(hotkey));
@@ -408,6 +481,16 @@ public:
 
 private:
     DreamLiveConfig() {
+        // Wire up ServerSync server-enforced config locking
+        DreamServerSync::RegisterConfigLockHandler(
+            [](const std::string& key, const std::string& val) {
+                DreamLiveConfig::Instance().LockByServer(key, val);
+            },
+            []() {
+                DreamLiveConfig::Instance().UnlockAllServerConfigs();
+            }
+        );
+
         // Engine defaults
         RegisterInt("engine.loglevel", 1, "Log level [0=Silent, 1=Info, 2=Debug, 3=Trace]");
         RegisterBool("engine.enableconsole", true, "Allocate console window");
@@ -451,34 +534,46 @@ private:
 template <>
 inline void ConfigEntry<bool>::Set(const bool& val) {
     if (m_pValue) {
-        *m_pValue = val;
-        DreamLiveConfig::Instance().Set(m_fullKey, val ? "true" : "false");
+        if (DreamLiveConfig::Instance().Set(m_fullKey, val ? "true" : "false")) {
+            *m_pValue = val;
+        } else {
+            *m_pValue = DreamLiveConfig::Instance().GetBool(m_fullKey, m_defaultValue);
+        }
     }
 }
 
 template <>
 inline void ConfigEntry<float>::Set(const float& val) {
     if (m_pValue) {
-        *m_pValue = val;
         std::ostringstream ss;
         ss << std::fixed << std::setprecision(2) << val;
-        DreamLiveConfig::Instance().Set(m_fullKey, ss.str());
+        if (DreamLiveConfig::Instance().Set(m_fullKey, ss.str())) {
+            *m_pValue = val;
+        } else {
+            *m_pValue = DreamLiveConfig::Instance().GetFloat(m_fullKey, m_defaultValue);
+        }
     }
 }
 
 template <>
 inline void ConfigEntry<int>::Set(const int& val) {
     if (m_pValue) {
-        *m_pValue = val;
-        DreamLiveConfig::Instance().Set(m_fullKey, std::to_string(val));
+        if (DreamLiveConfig::Instance().Set(m_fullKey, std::to_string(val))) {
+            *m_pValue = val;
+        } else {
+            *m_pValue = DreamLiveConfig::Instance().GetInt(m_fullKey, m_defaultValue);
+        }
     }
 }
 
 template <>
 inline void ConfigEntry<std::string>::Set(const std::string& val) {
     if (m_pValue) {
-        *m_pValue = val;
-        DreamLiveConfig::Instance().Set(m_fullKey, val);
+        if (DreamLiveConfig::Instance().Set(m_fullKey, val)) {
+            *m_pValue = val;
+        } else {
+            *m_pValue = DreamLiveConfig::Instance().Get(m_fullKey);
+        }
     }
 }
 

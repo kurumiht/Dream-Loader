@@ -1,6 +1,10 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <string>
+#include <sstream>
+#include <iomanip>
+#include <cstdio>
 
 extern "C" {
 #include "hde/hde64.h"
@@ -43,29 +47,35 @@ public:
         if (hs.flags & F_IMM8) {
             result.immSize = 1;
             result.immVal = hs.imm.imm8;
-            result.immOffset = result.length - 1;
+            result.immOffset = (result.length >= 1) ? static_cast<uint8_t>(result.length - 1) : 0;
         } else if (hs.flags & F_IMM16) {
             result.immSize = 2;
             result.immVal = hs.imm.imm16;
-            result.immOffset = result.length - 2;
+            result.immOffset = (result.length >= 2) ? static_cast<uint8_t>(result.length - 2) : 0;
         } else if (hs.flags & F_IMM32) {
             result.immSize = 4;
             result.immVal = hs.imm.imm32;
-            result.immOffset = result.length - 4;
+            result.immOffset = (result.length >= 4) ? static_cast<uint8_t>(result.length - 4) : 0;
         } else if (hs.flags & F_IMM64) {
             result.immSize = 8;
             result.immVal = hs.imm.imm64;
-            result.immOffset = result.length - 8;
+            result.immOffset = (result.length >= 8) ? static_cast<uint8_t>(result.length - 8) : 0;
         }
 
         // Check for RIP-relative addressing (ModR/M with mod = 00 and r/m = 101 [disp32])
         if (hs.flags & F_MODRM) {
             result.modrmReg = hs.modrm_reg;
             if ((hs.modrm_mod == 0) && (hs.modrm_rm == 5)) {
-                result.isRipRelative = true;
-                result.dispSize = 4;
-                result.dispOffset = result.length - result.immSize - 4;
-                result.dispVal = static_cast<int32_t>(hs.disp.disp32);
+                if (result.length >= result.immSize + 4) {
+                    result.isRipRelative = true;
+                    result.dispSize = 4;
+                    result.dispOffset = static_cast<uint8_t>(result.length - result.immSize - 4);
+                    result.dispVal = static_cast<int32_t>(hs.disp.disp32);
+                } else {
+                    result.isRipRelative = false;
+                    result.dispSize = 0;
+                    result.dispOffset = 0;
+                }
             }
         }
 
@@ -164,6 +174,47 @@ public:
         }
 
         return totalBytes;
+    }
+
+    // Dumps an annotated disassembly listing around address (for hook failure diagnostics)
+    static std::string DumpAnnotatedDisassembly(const void* address, size_t dumpBytes = 32, size_t highlightOffset = 0, const char* highlightReason = nullptr) {
+        if (!address) return "[Null Address]";
+        std::ostringstream ss;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(address);
+        ss << "\n=== [DreamDisasm] Annotated Hook Diagnostic Dump at 0x" << std::hex << reinterpret_cast<uintptr_t>(address) << " ===\n";
+        size_t offset = 0;
+        while (offset < dumpBytes) {
+            hde64s hs;
+            unsigned int len = hde64_disasm(p + offset, &hs);
+            if (len == 0 || (hs.flags & F_ERROR)) {
+                ss << "  +0x" << std::hex << offset << ": [??] DB " << std::hex << static_cast<int>(p[offset]) << " (Decode Error)\n";
+                offset++;
+                continue;
+            }
+            bool isHighlighted = (offset == highlightOffset || (highlightOffset >= offset && highlightOffset < offset + len));
+            ss << (isHighlighted ? ">>" : "  ");
+            ss << " +0x" << std::hex << offset << " (" << std::dec << static_cast<int>(len) << "B): ";
+            for (unsigned int b = 0; b < len; ++b) {
+                char hex[4];
+                std::snprintf(hex, sizeof(hex), "%02X ", p[offset + b]);
+                ss << hex;
+            }
+            for (unsigned int b = len; b < 7; ++b) ss << "   ";
+
+            // Annotate instruction semantics
+            if (IsCall(hs.opcode, hs.modrm_reg)) ss << " [CALL]";
+            else if (IsTerminalInstruction(hs.opcode, hs.opcode2, hs.modrm_reg)) ss << " [TERM]";
+            else if (IsConditionalJump(hs.opcode, hs.opcode2)) ss << " [JCC]";
+            else if (hs.opcode == 0x90) ss << " [NOP]";
+
+            if (isHighlighted && highlightReason) {
+                ss << "  <-- " << highlightReason;
+            }
+            ss << "\n";
+            offset += len;
+        }
+        ss << "======================================================================\n";
+        return ss.str();
     }
 };
 

@@ -181,16 +181,17 @@ public:
                 // Relocation Guard: Reject terminal instructions (RET/JMP/INT3) in the middle of stolen bytes
                 if ((curOffset + decoded.length) < m_stolenLen &&
                     DreamDisasm::IsTerminalInstruction(decoded.opcode, decoded.opcode2, decoded.modrmReg)) {
-                    DREAM_LOG_WARN("DreamInlineHook: Mid-region terminal instruction (0x%02X) detected at 0x%p",
-                                   decoded.opcode, m_target + curOffset);
+                    std::string dump = DreamDisasm::DumpAnnotatedDisassembly(m_target, m_stolenLen + 16, curOffset, "Mid-region terminal instruction");
+                    DREAM_LOG_WARN("DreamInlineHook: Mid-region terminal instruction (0x%02X) detected at 0x%p%s",
+                                   decoded.opcode, m_target + curOffset, dump.c_str());
                     return false;
                 }
 
-                // Relocation Guard: Reject CALL instructions in the middle of stolen bytes (unsafe for stack unwinding)
-                if ((curOffset + decoded.length) < m_stolenLen &&
-                    DreamDisasm::IsCall(decoded.opcode, decoded.modrmReg)) {
-                    DREAM_LOG_WARN("DreamInlineHook: Mid-region CALL instruction (0x%02X) detected at 0x%p (unsafe for stack unwinding)",
-                                   decoded.opcode, m_target + curOffset);
+                // Relocation Guard: Reject CALL instructions anywhere in stolen bytes (unsafe for stack unwinding & return address)
+                if (DreamDisasm::IsCall(decoded.opcode, decoded.modrmReg)) {
+                    std::string dump = DreamDisasm::DumpAnnotatedDisassembly(m_target, m_stolenLen + 16, curOffset, "Stolen CALL instruction (unsafe for unwinding)");
+                    DREAM_LOG_WARN("DreamInlineHook: Stolen CALL instruction (0x%02X) detected at 0x%p (unsafe for stack unwinding)%s",
+                                   decoded.opcode, m_target + curOffset, dump.c_str());
                     return false;
                 }
 
@@ -252,6 +253,7 @@ public:
                 }
                 // Handle RIP-relative ModR/M addressing (e.g. mov rax, [rip + disp32])
                 else if (decoded.isRipRelative && decoded.dispSize == 4) {
+                    if (decoded.dispOffset + 4 > decoded.length) return false;
                     uintptr_t oldTargetAddr = reinterpret_cast<uintptr_t>(m_target + curOffset + decoded.length) + decoded.dispVal;
                     uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_trampoline + trampOffset + decoded.length);
                     int64_t newDisp = static_cast<int64_t>(oldTargetAddr - newInstrEnd);
@@ -678,16 +680,17 @@ public:
                 // Relocation Guard: Reject terminal instructions (RET/JMP/INT3) in the middle of stolen bytes
                 if ((stolenOffset + decoded.length) < m_stolenLen &&
                     DreamDisasm::IsTerminalInstruction(decoded.opcode, decoded.opcode2, decoded.modrmReg)) {
-                    DREAM_LOG_WARN("DreamMidHook: Mid-region terminal instruction (0x%02X) detected at 0x%p",
-                                   decoded.opcode, m_target + stolenOffset);
+                    std::string dump = DreamDisasm::DumpAnnotatedDisassembly(m_target, m_stolenLen + 16, stolenOffset, "Mid-region terminal instruction");
+                    DREAM_LOG_WARN("DreamMidHook: Mid-region terminal instruction (0x%02X) detected at 0x%p%s",
+                                   decoded.opcode, m_target + stolenOffset, dump.c_str());
                     return false;
                 }
 
-                // Relocation Guard: Reject CALL instructions in the middle of stolen bytes (unsafe for stack unwinding)
-                if ((stolenOffset + decoded.length) < m_stolenLen &&
-                    DreamDisasm::IsCall(decoded.opcode, decoded.modrmReg)) {
-                    DREAM_LOG_WARN("DreamMidHook: Mid-region CALL instruction (0x%02X) detected at 0x%p (unsafe for stack unwinding)",
-                                   decoded.opcode, m_target + stolenOffset);
+                // Relocation Guard: Reject CALL instructions anywhere in stolen bytes (unsafe for stack unwinding & return address)
+                if (DreamDisasm::IsCall(decoded.opcode, decoded.modrmReg)) {
+                    std::string dump = DreamDisasm::DumpAnnotatedDisassembly(m_target, m_stolenLen + 16, stolenOffset, "Stolen CALL instruction (unsafe for unwinding)");
+                    DREAM_LOG_WARN("DreamMidHook: Stolen CALL instruction (0x%02X) detected at 0x%p (unsafe for stack unwinding)%s",
+                                   decoded.opcode, m_target + stolenOffset, dump.c_str());
                     return false;
                 }
 
@@ -764,6 +767,7 @@ public:
 
                 // Handle RIP-relative ModR/M addressing (e.g. mov rax, [rip + disp32])
                 if (decoded.isRipRelative && decoded.dispSize == 4) {
+                    if (instrStart + decoded.dispOffset + 4 > code.size()) return false;
                     uintptr_t oldTargetAddr = reinterpret_cast<uintptr_t>(m_target + stolenOffset + decoded.length) + decoded.dispVal;
                     uintptr_t newInstrEnd = reinterpret_cast<uintptr_t>(m_stubPage + instrStart + decoded.length);
                     int64_t newDisp = static_cast<int64_t>(oldTargetAddr - newInstrEnd);

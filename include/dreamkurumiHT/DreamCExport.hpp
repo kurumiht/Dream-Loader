@@ -135,6 +135,10 @@ DK_API void* DK_GetEntity(void* pContext, uint32_t entityId) {
     return dreamkurumi::enshrouded::EcsResolver::Instance().GetEntity(pContext, entityId);
 }
 
+DK_API void* DK_GetEntityByHandle(void* pContext, uint64_t entityHandle) {
+    return dreamkurumi::enshrouded::EcsResolver::Instance().GetEntityByHandle(pContext, entityHandle);
+}
+
 DK_API void* DK_GetEntityComponent(void* pEntity, uint16_t compId) {
     return dreamkurumi::enshrouded::EcsResolver::Instance().GetComponent(pEntity, compId);
 }
@@ -820,9 +824,9 @@ DK_API size_t DK_Store_FlushAll() {
 // ============================================================================
 // Network RPC Multiplexer V2 (v3.8.5)
 // ============================================================================
-DK_API uint32_t DK_Rpc_PackFrame(uint32_t callerId, uint32_t targetId, uint32_t rpcHash,
-                                const uint8_t* payload, uint32_t payloadSize,
-                                uint8_t* outBuffer, uint32_t maxBufferSize) {
+DK_API uint32_t DK_Rpc_PackFrame64(uint32_t callerId, uint32_t targetId, uint64_t rpcHash,
+                                  const uint8_t* payload, uint32_t payloadSize,
+                                  uint8_t* outBuffer, uint32_t maxBufferSize) {
     if (!outBuffer || maxBufferSize < 28) return 0;
     std::vector<uint8_t> pVec;
     if (payload && payloadSize > 0) {
@@ -832,6 +836,12 @@ DK_API uint32_t DK_Rpc_PackFrame(uint32_t callerId, uint32_t targetId, uint32_t 
     if (frame.size() > maxBufferSize) return 0;
     std::memcpy(outBuffer, frame.data(), frame.size());
     return static_cast<uint32_t>(frame.size());
+}
+
+DK_API uint32_t DK_Rpc_PackFrame(uint32_t callerId, uint32_t targetId, uint32_t rpcHash,
+                                const uint8_t* payload, uint32_t payloadSize,
+                                uint8_t* outBuffer, uint32_t maxBufferSize) {
+    return DK_Rpc_PackFrame64(callerId, targetId, static_cast<uint64_t>(rpcHash), payload, payloadSize, outBuffer, maxBufferSize);
 }
 
 DK_API void DK_Rpc_AuthorizeCaller(uint32_t callerId, bool allowed) {
@@ -896,6 +906,33 @@ DK_API int DK_Gns_FilterAndDemux(void** ppOutMessages, int numMessages, bool isS
         numMessages,
         isServerSide
     );
+}
+
+// ============================================================================
+// Server-Client ECS Auto-Resync (v3.9.0 v1.7)
+// ============================================================================
+DK_API bool DK_RegisterSessionResetCallback(dreamkurumi::DK_SessionResetCallback cb, void* userData) {
+    return dreamkurumi::DreamSessionSync::Instance().RegisterSessionResetCallback(cb, userData);
+}
+
+DK_API bool DK_UnregisterSessionResetCallback(dreamkurumi::DK_SessionResetCallback cb) {
+    return dreamkurumi::DreamSessionSync::Instance().UnregisterSessionResetCallback(cb);
+}
+
+DK_API uint64_t DK_GetServerSessionEpoch() {
+    return dreamkurumi::DreamSessionSync::Instance().GetServerSessionEpoch();
+}
+
+DK_API bool DK_IsServerSessionStale() {
+    return dreamkurumi::DreamSessionSync::Instance().IsSessionStale();
+}
+
+DK_API void DK_InvalidateEcsWorldCache() {
+    dreamkurumi::DreamSessionSync::Instance().InvalidateWorldCache();
+}
+
+DK_API void DK_NotifyResyncComplete() {
+    dreamkurumi::DreamSessionSync::Instance().NotifyResyncComplete();
 }
 
 } // extern "C"

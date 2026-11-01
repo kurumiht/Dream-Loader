@@ -142,17 +142,23 @@ static inline bool IsLikelyReturnAddress(uintptr_t candidateAddr) noexcept {
     // - FF D0..D7 / FF 10..17      (2-byte indirect CALL reg / CALL [reg])
     if (p[-2] == 0xFF && ((p[-1] & 0x38) == 0x10)) return true;
 
-    // - 41 FF D0..D7 or FF 50 xx   (3-byte REX + CALL reg or CALL [reg+disp8])
+    // - 41 FF D0..D7               (3-byte REX.B + CALL r8..r15)
+    if ((p[-3] & 0xF0) == 0x40 && p[-2] == 0xFF && ((p[-1] & 0x38) == 0x10)) return true;
+
+    // - FF 50..57 xx               (3-byte indirect CALL [reg+disp8])
     if (p[-3] == 0xFF && ((p[-2] & 0x38) == 0x10)) return true;
 
-    // - FF 54 24 xx or 41 FF 50 xx (4-byte SIB/REX indirect CALL [rsp+disp8])
+    // - FF 54 24 xx                (4-byte SIB indirect CALL [rsp+disp8])
     if (p[-4] == 0xFF && ((p[-3] & 0x38) == 0x10)) return true;
 
-    // - FF 90 xx xx xx xx          (6-byte indirect CALL [reg+disp32] - vtable calls!)
+    // - 41 FF 50..57 xx            (4-byte REX + indirect CALL [r8..r15+disp8])
+    if ((p[-4] & 0xF0) == 0x40 && p[-3] == 0xFF && ((p[-2] & 0x38) == 0x10)) return true;
+
+    // - FF 90..97 xx xx xx xx      (6-byte indirect CALL [reg+disp32] - vtable calls!)
     if (p[-6] == 0xFF && ((p[-5] & 0x38) == 0x10)) return true;
 
-    // - 41 FF 90 xx xx xx xx       (7-byte REX/SIB indirect CALL [r8+disp32])
-    if (p[-7] == 0xFF && ((p[-6] & 0x38) == 0x10)) return true;
+    // - 41 FF 90..97 xx xx xx xx   (7-byte REX + indirect CALL [r8..r15+disp32])
+    if ((p[-7] & 0xF0) == 0x40 && p[-6] == 0xFF && ((p[-5] & 0x38) == 0x10)) return true;
 
     return false;
 }
@@ -465,19 +471,25 @@ public:
 #endif
 
         if (!ctx.faultOccurred) {
-            // Normal execution path
-            if constexpr (std::is_void_v<ReturnType>) {
-                callback();
+            // Normal execution path with C++ exception safety (cleans up TLS before propagating)
+            try {
+                if constexpr (std::is_void_v<ReturnType>) {
+                    callback();
+                    ctx.inSandbox = false;
+                    TlsSetValue(GetTlsIndex(), ctx.prevCtx);
+                    RecordSuccess(ctx.modName, ctx.entryGen);
+                    return;
+                } else {
+                    ReturnType result = callback();
+                    ctx.inSandbox = false;
+                    TlsSetValue(GetTlsIndex(), ctx.prevCtx);
+                    RecordSuccess(ctx.modName, ctx.entryGen);
+                    return result;
+                }
+            } catch (...) {
                 ctx.inSandbox = false;
                 TlsSetValue(GetTlsIndex(), ctx.prevCtx);
-                RecordSuccess(ctx.modName, ctx.entryGen);
-                return;
-            } else {
-                ReturnType result = callback();
-                ctx.inSandbox = false;
-                TlsSetValue(GetTlsIndex(), ctx.prevCtx);
-                RecordSuccess(ctx.modName, ctx.entryGen);
-                return result;
+                throw; // Propagate standard C++ exceptions to caller while keeping TLS clean
             }
         } else {
             // Execution arrived here on clean stack after NtContinue restored savedCtx!
@@ -662,8 +674,13 @@ private:
 
             ctx->faultOpcodesLen = 0;
             if (!isBadRip) {
-                std::memcpy(ctx->faultOpcodes, reinterpret_cast<const void*>(c->Rip), 15);
-                ctx->faultOpcodesLen = 15;
+                // Page-Boundary Safe Read: clamp read size to avoid crossing 4KB page boundary into unmapped memory
+                size_t pageRemaining = 0x1000 - (c->Rip & 0xFFFULL);
+                size_t copyLen = (pageRemaining < 15) ? pageRemaining : 15;
+                if (copyLen > 0) {
+                    std::memcpy(ctx->faultOpcodes, reinterpret_cast<const void*>(c->Rip), copyLen);
+                    ctx->faultOpcodesLen = static_cast<uint8_t>(copyLen);
+                }
             }
 
             // Safe peek top 4 QWORDs on stack [rsp]

@@ -125,6 +125,7 @@ typedef bool (*FnDK_RestorePatch)(void* patchHandle);
 
 typedef bool (*FnDK_ExecuteProtected)(const char* modName, void (*cb)(void* userData), void* userData);
 typedef void* (*FnDK_GetEntity)(void* pContext, uint32_t entityId);
+typedef void* (*FnDK_GetEntityByHandle)(void* pContext, uint64_t entityHandle);
 typedef void* (*FnDK_GetEntityComponent)(void* pEntity, uint16_t compId);
 typedef bool (*FnDK_GetEntityPosition)(void* pEntity, float* outX, float* outY, float* outZ);
 typedef bool (*FnDK_GetWorldCursorPosition)(float* outX, float* outY, float* outZ);
@@ -187,6 +188,9 @@ typedef size_t (*FnDK_Store_FlushAll)();
 typedef uint32_t (*FnDK_Rpc_PackFrame)(uint32_t callerId, uint32_t targetId, uint32_t rpcHash,
                                        const uint8_t* payload, uint32_t payloadSize,
                                        uint8_t* outBuffer, uint32_t maxBufferSize);
+typedef uint32_t (*FnDK_Rpc_PackFrame64)(uint32_t callerId, uint32_t targetId, uint64_t rpcHash,
+                                         const uint8_t* payload, uint32_t payloadSize,
+                                         uint8_t* outBuffer, uint32_t maxBufferSize);
 typedef void (*FnDK_Rpc_AuthorizeCaller)(uint32_t callerId, bool allowed);
 typedef void (*FnDK_Rpc_SetTokenBucketParams)(double refillRatePerSec, double maxBurstCapacity);
 
@@ -204,6 +208,15 @@ typedef uint64_t (*FnDK_PluginGate_GetInFlight)(const char* modName);
 
 // GNS Transport Demultiplexing (v3.9.0)
 typedef int (*FnDK_Gns_FilterAndDemux)(void** ppOutMessages, int numMessages, bool isServerSide);
+
+// Server-Client ECS Auto-Resync (v3.9.0 v1.7)
+typedef void (*DK_SessionResetCallback)(uint64_t oldEpoch, uint64_t newEpoch, void* userData);
+typedef bool (*FnDK_RegisterSessionResetCallback)(DK_SessionResetCallback cb, void* userData);
+typedef bool (*FnDK_UnregisterSessionResetCallback)(DK_SessionResetCallback cb);
+typedef uint64_t (*FnDK_GetServerSessionEpoch)();
+typedef bool (*FnDK_IsServerSessionStale)();
+typedef void (*FnDK_InvalidateEcsWorldCache)();
+typedef void (*FnDK_NotifyResyncComplete)();
 
 
 typedef void (*FnDK_Preset_SetGodMode)(bool enable);
@@ -322,6 +335,7 @@ public:
         BIND_DK(DK_RestorePatch);
         BIND_DK(DK_ExecuteProtected);
         BIND_DK(DK_GetEntity);
+        BIND_DK(DK_GetEntityByHandle);
         BIND_DK(DK_GetEntityComponent);
         BIND_DK(DK_GetEntityPosition);
         BIND_DK(DK_GetWorldCursorPosition);
@@ -436,6 +450,7 @@ public:
         BIND_DK(DK_Store_FlushAll);
 
         BIND_DK(DK_Rpc_PackFrame);
+        BIND_DK(DK_Rpc_PackFrame64);
         BIND_DK(DK_Rpc_AuthorizeCaller);
         BIND_DK(DK_Rpc_SetTokenBucketParams);
 
@@ -449,6 +464,12 @@ public:
         BIND_DK(DK_PluginGate_CloseAndDrain);
         BIND_DK(DK_PluginGate_GetInFlight);
         BIND_DK(DK_Gns_FilterAndDemux);
+        BIND_DK(DK_RegisterSessionResetCallback);
+        BIND_DK(DK_UnregisterSessionResetCallback);
+        BIND_DK(DK_GetServerSessionEpoch);
+        BIND_DK(DK_IsServerSessionStale);
+        BIND_DK(DK_InvalidateEcsWorldCache);
+        BIND_DK(DK_NotifyResyncComplete);
         #undef BIND_DK
 
         m_initialized = true;
@@ -479,6 +500,7 @@ public:
     FnDK_RestorePatch pfn_DK_RestorePatch = nullptr;
     FnDK_ExecuteProtected pfn_DK_ExecuteProtected = nullptr;
     FnDK_GetEntity pfn_DK_GetEntity = nullptr;
+    FnDK_GetEntityByHandle pfn_DK_GetEntityByHandle = nullptr;
     FnDK_GetEntityComponent pfn_DK_GetEntityComponent = nullptr;
     FnDK_GetEntityPosition pfn_DK_GetEntityPosition = nullptr;
     FnDK_GetWorldCursorPosition pfn_DK_GetWorldCursorPosition = nullptr;
@@ -594,6 +616,7 @@ public:
     FnDK_Store_FlushAll pfn_DK_Store_FlushAll = nullptr;
 
     FnDK_Rpc_PackFrame pfn_DK_Rpc_PackFrame = nullptr;
+    FnDK_Rpc_PackFrame64 pfn_DK_Rpc_PackFrame64 = nullptr;
     FnDK_Rpc_AuthorizeCaller pfn_DK_Rpc_AuthorizeCaller = nullptr;
     FnDK_Rpc_SetTokenBucketParams pfn_DK_Rpc_SetTokenBucketParams = nullptr;
 
@@ -607,6 +630,12 @@ public:
     FnDK_PluginGate_CloseAndDrain pfn_DK_PluginGate_CloseAndDrain = nullptr;
     FnDK_PluginGate_GetInFlight pfn_DK_PluginGate_GetInFlight = nullptr;
     FnDK_Gns_FilterAndDemux pfn_DK_Gns_FilterAndDemux = nullptr;
+    FnDK_RegisterSessionResetCallback pfn_DK_RegisterSessionResetCallback = nullptr;
+    FnDK_UnregisterSessionResetCallback pfn_DK_UnregisterSessionResetCallback = nullptr;
+    FnDK_GetServerSessionEpoch pfn_DK_GetServerSessionEpoch = nullptr;
+    FnDK_IsServerSessionStale pfn_DK_IsServerSessionStale = nullptr;
+    FnDK_InvalidateEcsWorldCache pfn_DK_InvalidateEcsWorldCache = nullptr;
+    FnDK_NotifyResyncComplete pfn_DK_NotifyResyncComplete = nullptr;
 };
 
 // Clean C++ Helpers
@@ -756,6 +785,14 @@ inline void* GetEntity(void* pContext, uint32_t entityId) {
     auto& host = PluginHost::Instance();
     if (host.Init() && host.pfn_DK_GetEntity) {
         return host.pfn_DK_GetEntity(pContext, entityId);
+    }
+    return nullptr;
+}
+
+inline void* GetEntityByHandle(void* pContext, uint64_t entityHandle) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_GetEntityByHandle) {
+        return host.pfn_DK_GetEntityByHandle(pContext, entityHandle);
     }
     return nullptr;
 }
@@ -1114,6 +1151,57 @@ namespace DreamCrashGuard {
             return host.pfn_DK_CrashGuard_GetFaultCount(modName);
         }
         return 0;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// DreamSessionSync Plugin C++ Helpers (v3.9.0 v1.7)
+// ----------------------------------------------------------------------------
+namespace DreamSessionSync {
+    inline bool RegisterResetCallback(DK_SessionResetCallback cb, void* userData = nullptr) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_RegisterSessionResetCallback) {
+            return host.pfn_DK_RegisterSessionResetCallback(cb, userData);
+        }
+        return false;
+    }
+
+    inline bool UnregisterResetCallback(DK_SessionResetCallback cb) {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_UnregisterSessionResetCallback) {
+            return host.pfn_DK_UnregisterSessionResetCallback(cb);
+        }
+        return false;
+    }
+
+    inline uint64_t GetServerEpoch() {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_GetServerSessionEpoch) {
+            return host.pfn_DK_GetServerSessionEpoch();
+        }
+        return 0;
+    }
+
+    inline bool IsServerStale() {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_IsServerSessionStale) {
+            return host.pfn_DK_IsServerSessionStale();
+        }
+        return false;
+    }
+
+    inline void InvalidateWorldCache() {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_InvalidateEcsWorldCache) {
+            host.pfn_DK_InvalidateEcsWorldCache();
+        }
+    }
+
+    inline void NotifyResyncComplete() {
+        auto& host = PluginHost::Instance();
+        if (host.Init() && host.pfn_DK_NotifyResyncComplete) {
+            host.pfn_DK_NotifyResyncComplete();
+        }
     }
 }
 

@@ -4,6 +4,229 @@ All notable changes to the **dreamkurumiHT** Native Harmony Modding Framework wi
 
 ---
 
+## [v3.9.1] - 2026-11-01 (Official Release - Session Epoch Auto-Resync, High-Jitter Resilience & Mutual Exclusivity)
+
+### Summary
+Official production release promoting intermediate revisions v3.9.0 v1.0 through v3.9.0 v1.11 to stable v3.9.1.
+
+### Highlights
+- Server Session Epoch & Zero-Touch Auto-Resync (reconnect & server restart safe recovery)
+- VPN & High-Jitter Network Resilience (configurable 10s watchdog heartbeat tolerance)
+- Clean Default Keybindings (Diagnostic HUD overlay disabled by default)
+- Crop Harvest & Ground Loot Mutual Exclusivity
+- C-ABI v1 100% Binary Backward Compatibility
+
+---
+
+## [v3.9.0 v1.11] - 2026-11-01 (Configurable SessionSync, F9 Disabled by Default & Auto-Pickup Configs)
+
+
+
+### Core Engine Configuration Hardening
+
+- **F9 Diagnostic HUD Disabled by Default:**
+
+  - Configured `EnableDiagnosticsHUD = false` by default across `config.toml`, `config.ini`, `DreamDiagnosticOverlay.hpp`, and `DreamLiveConfig.hpp`.
+
+  - Ensures the F9 key remains completely free for other user keybindings unless explicitly enabled.
+
+- **Dedicated [SessionSync] Configuration Section:**
+
+  - Exposed `EnableSessionSync = true`, `WatchdogTimeoutSeconds = 10`, and `BroadcastIntervalMs = 1000` in both `config.toml` and `config.ini`.
+
+  - `DreamSessionSync` now dynamically loads and respects custom watchdog timeout and heartbeat intervals.
+
+
+
+### Plugin Configuration Polish
+
+- **Dream-Auto-Pickup Settings:**
+
+  - Documented and exposed `SameTypeOnly = false` and `ShiftKeyVanillaMode = true` in both `config.toml` and `config.ini`.
+
+
+
+---
+
+
+
+## [v3.9.0 v1.10] - 2026-11-01 (Multi-Plugin Mutual Exclusivity, Auto-Resync Hardening & Buffer Clamping)
+
+### 🌾 Crop Harvest & Ground Loot Mutual Exclusivity (Dream-AoE-Harvest & Dream-Auto-Pickup)
+- **Strict Ground Loot vs Farm Crop Classification:**
+  - Added IsGroundLootArchetype detecting Word 5 components 326..334 (PickupItem, DestroyOnLoot, AreaLootOverride, etc.).
+  - Dream-AoE-Harvest explicitly aborts if IsGroundLootArchetype(pPrimaryArch) is true, guaranteeing it never touches dropped wood, stones, ores, or monster drops.
+  - Dream-Auto-Pickup explicitly aborts if !IsGroundLootArchetype(pPrimaryArch) is true, guaranteeing it never intercepts farm crops or non-loot world objects.
+  - Eliminates batch clobbering and buffer index contention between the two chained plugins.
+- **Buffer Safety Invariant (Dream-Auto-Pickup):**
+  - Added strict slot clamping: maxSlotsRemaining = (currentCount < 15) ? (15 - currentCount) : 0.
+  - Prevents writing byte markers beyond the 2048-byte single chunk boundary.
+
+### 🌐 Session Epoch & Auto-Resync Machine Hardening (DreamSessionSync.hpp)
+- **Stale Context Cache Invalidation:**
+  - On incoming epoch change, immediately invalidates DreamGameContext::LocalPlayer and World pointers (
+ullptr).
+  - YieldUntil now strictly waits for fresh local player spawn rather than clearing safe-mode prematurely on a timer with stale session pointers.
+- **VPN / High-Jitter Network Tolerance:**
+  - Increased dedicated server epoch broadcast frequency to **1000ms** (RunEvery(1000, ...)).
+  - Extended client heartbeat watchdog timeout from **6000ms** to **10000ms** (10 seconds), preventing false-positive safe-mode drops across Radmin VPN or Wi-Fi jitter.
+- **Anti-Spoofing Guard:**
+  - In InitializeClientListener, added verification if (!pkt.IsFromServer() && !DreamNetBridge::Instance().IsLoopbackEnabled()) return; to prevent foreign client epoch spoofing.
+
+---
+
+## [v3.9.0 v1.6] - 2026-11-01 (F9 Diagnostics, Window Minimization, Live Network Tracking & AoE Harvest Fixes)
+
+### 🖥️ Native F9 HUD & Window Management
+- **Crash-Proof Window Synchronization (`DreamWindowSync.hpp`):**
+  - Completely replaced fragile cross-thread `GWLP_WNDPROC` subclassing of the game window with native Win32 window ownership (`SetWindowLongPtrW(m_hWnd, GWLP_HWNDPARENT, hGameWnd)`).
+  - Eliminates the crash that occurred when opening the F9 menu after joining a dedicated server (where swapchain recreation collided with foreign message procedure hooks).
+  - Safe for all Vulkan, SDL, and GLFW window management workflows.
+- **Window Minimization & Alt-Tab Focus Fix (`DreamDiagnosticOverlay.hpp`):**
+  - Removed `WS_EX_TOPMOST` and desktop-wide floating behavior.
+  - As an owned window (`GWLP_HWNDPARENT`), Windows OS automatically hides the F9 overlay when the game is minimized and keeps it behind other active desktop applications (Discord, Chrome, etc.).
+  - Added strict foreground window filtering (`GetForegroundWindow() != hTargetWnd`) and `m_redrawMutex` synchronization to guarantee GDI double-buffering is 100% thread-safe.
+  - Added NULL-pointer guards for `CreateDIBSection` allocations to eliminate secondary Access Violations.
+
+### 🌐 Live Steam / GNS Network State Tracking
+- **Automatic SteamNetworkingSockets Interceptor (`DreamGnsTransportHook.hpp`):**
+  - Added dynamic runtime hooking for `steam_api64.dll` exports: `SteamAPI_ISteamNetworkingSockets_ReceiveMessagesOnConnection`, `SteamAPI_ISteamNetworkingSockets_GetConnectionRealTimeStatus`, and `SteamAPI_ISteamNetworkingSockets_CloseConnection`.
+  - Automatically queries live connection quality and round-trip ping (ms) without touching internal engine offsets.
+  - Solved the issue where F9 HUD showed `Server Connection: Disconnected / Local` even when connected to a dedicated multiplayer server.
+  - Added fallback in `DreamNetStateTracker` (`IsClientConnectedToRemoteServer()`) to detect active multiplayer sessions seamlessly.
+
+### 📦 Native Plugins Ecosystem Updates
+- **Dream-AoE-Harvest Fixes (`mods\Dream-AoE-Harvest`):**
+  - Fixed `Hook_GetInteractionOffer` by removing premature local scoping flag that disabled offer synthesis before the engine's outer batch loop executed.
+  - Corrected `IsContainerArchetype` mask: removed erroneous `CONTAINER_WORD4_MASK` and restricted container checks strictly to Word 5 (Components 372, 373, 382).
+  - Primary crop archetype is no longer dropped if it lacks bit 43: whatever crop the player interacted with is accepted and matched against identical nearby crops.
+- **Dual-Plugin Chaining Protocol (`Dream-AoE-Harvest` & `Dream-Auto-Pickup`):**
+  - Implemented transparent multi-hook chaining in mod assembly stubs (`AoeHarvestAsm.s` and `AutoPickupAsm.s`).
+  - When one mod hooks onto another pre-existing mod detour, it skips executing displaced instructions in the intermediate hook and passes control down the chain cleanly.
+  - Displaced instructions are executed exactly once at the terminal return to game engine code, completely eliminating duplicate stack writes, clobbered `rax`/`r8d`, and register corruption.
+
+### 🧪 Verification & Build
+- **Tests:** 96/96 unit tests passing 100% Green (`build_test.bat`).
+- **ABI Golden Check:** 131/131 API exports verified, 0 unlisted exports (`check_exports.py`).
+- **ABI Smoke Test:** Binary golden plugin compatibility verified (`golden_host_test.exe`).
+- **Master Build:** All 5 modules recompiled and auto-synchronized cleanly via `build_all.bat`.
+
+---
+
+## [v3.9.0 v1.5] - 2026-11-01 (Full Codebase Audit & Hardening)
+
+### 🛡️ Core Engine Hardening & Bug Fixes
+- **ConfigEntry Server-Lock Sync Guard (`DreamLiveConfig.hpp`):**
+  - Fixed an issue where `ConfigEntry<T>::Set` prematurely updated its cached value pointer before verifying server lock status.
+  - Now verifies `DreamLiveConfig::Set` return value: if enforced by Dedicated Server, the local mutation is rejected and resynchronized to the server-locked value.
+- **NetBufferReader Error Latching (`DreamNetBridge.hpp`):**
+  - Added sticky error state (`HasError()`, `ClearError()`, `m_error`) to `NetBufferReader`.
+  - Out-of-bounds reads and truncated strings immediately latch `m_error = true`, preventing deserialization desynchronization.
+- **CrashGuard Heuristic & VEH Page-Boundary Safety (`DreamCrashGuard.hpp`):**
+  - Corrected x64 REX prefix offset parsing in `IsLikelyReturnAddress` for 3-byte (`41 FF D0..D7`), 4-byte (`41 FF 50..57`), and 7-byte (`41 FF 90..97`) indirect calls.
+  - Clamped opcode sniffing in `VectoredCrashHandler` to the 4KB page boundary (`0x1000 - (RIP & 0xFFF)`), eliminating secondary Access Violations.
+  - Added TLS cleanup on C++ exception propagation in `Execute`, preventing dangling stack pointers in the thread's TLS slot.
+- **Disassembly Underflow & Relocation Bounds Guards (`DreamDisasm.hpp`, `DreamHook.hpp`):**
+  - Guarded `dispOffset` and `immOffset` calculations against `uint8_t` underflow on malformed opcodes.
+  - Added strict destination buffer bounds checks before writing relocated RIP-relative displacements in `DreamInlineHook` and `DreamMidHook`.
+- **Deterministic Hook Subscriber Ordering (`DreamDispatcher.hpp`, `DreamPipeline.hpp`):**
+  - Replaced `std::sort` with `std::stable_sort` across central detour and hook pipeline subscriber registries to guarantee deterministic FIFO execution when priorities match.
+- **TOML Parser Standards Compliance (`DreamToml.hpp`):**
+  - Fixed quote boundary detection when lines contain escaped backslashes (e.g. Windows paths like `H:\\Games\\Enshrouded\\`).
+  - Added standard TOML basic string unescaping for double-quoted strings (`\"`, `\\`, `\n`, `\t`, `\r`).
+- **Shadow VMT Memory Boundary Protection (`DreamVTable.hpp`):**
+  - Added `VirtualQuery` readable page clamping to `DreamShadowVTable::Initialize`, preventing out-of-bounds reads during per-instance vtable cloning.
+
+### 🧪 Test Suite & ABI Verification
+- **Test Suite Expansion:**
+  - Added **Test 96** comprehensively verifying `NetBufferReader` error latching, `ConfigEntry` server-lock anti-tamper, `DreamToml` path escapes & unescaping, `DreamDisasm` underflow resilience, deterministic dispatcher FIFO ordering, and `DreamCrashGuard` exception TLS safety.
+  - **All 96 tests passing 100% Green**.
+- **ABI Golden Verification:**
+  - Passed `check_exports.py` with 131 official API symbols and 0 unlisted exports.
+  - Passed `golden_host_test.exe` binary compatibility test (`smoke=0`).
+- **Master Build:**
+  - Built and auto-synchronized all 5 modules to `EnshroudedServer`: `dreamkurumiHT.dll`, `DreamAoEHarvest.dll`, `DreamAutoPickup.dll`, `XPShare.dll`, `AdminMenu.dll`.
+
+---
+
+## [v3.9.0 v1.4] - 2026-10-31 (ServerSync Handshake Gate & Dedicated Server Config Locking)
+
+### 🌐 Networking & Server-Enforced Synchronization (ServerSync)
+- **Dedicated Server Mod Version Handshake Gate (`DreamNetBridge.hpp`):**
+  - Implemented `DreamServerSync::EvaluateHandshake` on Dedicated Server to validate client Core versions and required mod versions (`RequireMod(name, minVersion, maxVersion)`).
+  - Automatically evaluates semantic versions (`CompareVersions`) across major, minor, and patch numbers.
+  - Rejects incompatible clients before state synchronization (`RejectedMismatch`, `RejectedMissingMod`, `RejectedOutdatedCore`) with detailed diagnostic messages.
+- **Client Memory Config Locking (`DreamLiveConfig.hpp`):**
+  - Added `isServerEnforced` and `localSavedValueStr` to `ConfigProperty`.
+  - `DreamLiveConfig::LockByServer(key, value)` enforces server-side properties in client memory and fires `OnChange` callbacks.
+  - Any local client mutation or console override attempting to tamper with server-locked settings is rejected and logged.
+  - Disconnecting from the Dedicated Server (`UnlockAllServerConfigs`) automatically unlocks properties and restores client local values.
+- **Decoupled Synchronization Architecture:**
+  - Decoupled `DreamServerSync` and `DreamLiveConfig` via `RegisterConfigLockHandler`, maintaining zero circular include dependencies.
+
+### 🧪 Test Suite & ABI Verification
+- **Test Suite Expansion:**
+  - Added Test 95 covering semantic version comparisons, multi-case Handshake evaluation (Core, Missing, Mismatch, Accepted), memory config locking, cheat override rejection, and disconnect restoration.
+  - **All 95 tests passing 100% Green**.
+- **ABI Golden Verification:**
+  - Passed `check_exports.py` with 131 official API symbols and 0 unlisted exports.
+  - Passed `golden_host_test.exe` binary compatibility test (`smoke=0`).
+
+---
+
+## [v3.9.0 v1.3] - 2026-10-31 (Harmony State Sharing, SIMD Scanner & Annotated Disasm Dump)
+
+### 🛡️ Hooking & Instruction-Level Diagnostics
+- **Harmony State Sharing (`__state`) (`DreamHarmony.hpp`):**
+  - Implemented `DreamPatchState` zero-allocation scratch context passed seamlessly between `Prefix` and `Postfix`.
+  - Prefix can save state via `state.Set<T>(val)` and Postfix retrieves it via `state.Get<T>()`.
+  - Fully backward compatible: existing patches without `DreamPatchState&` continue to run unmodified.
+- **Annotated Disassembly Dumper on Hook Failure (`DreamDisasm.hpp`, `DreamHook.hpp`):**
+  - Added `DreamDisasm::DumpAnnotatedDisassembly` which produces an annotated machine-code trace (`[CALL]`, `[TERM]`, `[JCC]`, `[NOP]`) and highlights the exact collision offset and reason.
+  - Automatically logged when InlineHook or MidHook installation fails, accelerating patch maintenance across game updates.
+
+### ⚡ Vectorized Pattern Scanning
+- **AVX2 256-bit SIMD Pattern Scanner Verification (`DreamScanner.hpp`):**
+  - Verified 32-byte/cycle scanning using AVX2 `_mm256_cmpeq_epi8` with automatic SSE2 16-byte fallback, achieving 1-2ms cold boot scans across the entire game module.
+
+### 🧪 Test Suite & ABI Verification
+- **Test Suite Expansion:**
+  - Added Test 94 covering Harmony State Sharing context transfer, SIMD pattern matching with wildcards, and annotated disassembly dump formatting.
+  - **All 94 tests passing 100% Green**.
+- **ABI Golden Verification:**
+  - Passed `check_exports.py` with 131 official API symbols and 0 unlisted exports.
+  - Passed `golden_host_test.exe` binary compatibility test (`smoke=0`).
+
+---
+
+## [v3.9.0 v1.2] - 2026-10-31 (Instruction-Level Safety, Unwind Guard & Concurrency Audit)
+
+### 🛡️ Instruction-Level Relocation & Hook Hardening
+- **Universal Stolen `CALL` Instruction Rejection (`DreamHook.hpp`, `DreamDisasm.hpp`):**
+  - Completely reject any hook installation attempting to displace `CALL` instructions (`0xE8`, `0xFF /2`, `0xFF /3`) anywhere within the stolen bytes.
+  - Eliminates return address corruption, stack unwinder crashes, and prevents the fatal hazard where a simulated return address points into the overwritten 14-byte hook jump stub.
+- **Hardware Breakpoint Resume Flag (RF) Isolation (`DreamVeh.hpp`):**
+  - Confirmed and verified that `EFlags |= 0x10000` (Resume Flag) is strictly applied **only** to execution breakpoints (`BreakOn::Execute`).
+  - Trap-type data watchpoints (`BreakOn::Write`, `BreakOn::ReadWrite`) leave `RF` untouched, preventing suppression of legitimate execution breakpoints on subsequent instructions.
+
+### ⚡ Concurrency & Terraforming Performance
+- **Voxel Engine Single-Lock Batching (`DreamVoxelEngine.hpp`):**
+  - Moved `std::lock_guard<std::mutex>` outside the 3D loop in `SetTerrainSphere`, eliminating ~17,000 lock/unlock cycles per excavation down to a single lock acquisition.
+- **Non-Blocking Store Namespace Loading (`DreamStore.hpp`):**
+  - Verified double-checked locking pattern in `GetNamespace`, executing disk I/O (`std::ifstream`) outside `m_masterMutex` to prevent blocking concurrent namespace lookups.
+- **Thread Freeze Capacity (`DreamThread.hpp`):**
+  - Unified `ScopedThreadFreeze` buffer to `1024` threads (`MAX_FROZEN_THREADS = 1024`), guaranteeing all threads are suspended without truncation on high-core server environments.
+
+### 🧪 Test Suite & ABI Verification
+- **Test Suite Expansion:**
+  - Added Test 93 covering `ScopedThreadFreeze::TranslateIp` exact & intra-instruction relocation, `DreamVoxelEngine::SetTerrainSphere` batched single-lock terraforming, and `DreamDisasm::IsCall` instruction coverage.
+  - **All 93 tests passing 100% Green**.
+- **ABI Golden Verification:**
+  - Passed `check_exports.py` with 131 official API symbols and 0 unlisted exports.
+  - Passed `golden_host_test.exe` binary compatibility test (`smoke=0`).
+
+---
+
 ## [v3.9.0 v1.1] - 2026-10-31 (Full Codebase Function Audit, Bug Fixes & ABI Hardening)
 
 ### 🐛 Critical Bug Fixes

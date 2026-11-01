@@ -45,10 +45,12 @@ api: DK_Game_IsPlayerReady | bool | void
 api: DK_Game_TeleportPlayer | bool | float, float, float
 api: DK_GetAbiVersion | uint32_t | void
 api: DK_GetEntity | void* | void*, uint32_t
+api: DK_GetEntityByHandle | void* | void*, uint64_t
 api: DK_GetEntityComponent | void* | void*, uint16_t
 api: DK_GetEntityPosition | bool | void*, float*, float*, float*
 api: DK_GetGameBuildTimestamp | uint32_t | void
 api: DK_GetModuleBase | uintptr_t | void
+api: DK_GetServerSessionEpoch | uint64_t | void
 api: DK_GetWorldCursor | bool | DreamWorldCursor*
 api: DK_GetWorldCursorPosition | bool | float*, float*, float*
 api: DK_GetWorldCursorRay | bool | float*, float*, float*, float*, float*, float*
@@ -57,6 +59,8 @@ api: DK_Hash_Fnv1a64 | uint64_t | const char*
 api: DK_Hook_HasExistingHook | bool | const void*, uintptr_t*
 api: DK_Initialize | bool | const char*
 api: DK_InlineHook | void* | void*, void*, void**
+api: DK_InvalidateEcsWorldCache | void | void
+api: DK_IsServerSessionStale | bool | void
 api: DK_Log | void | int, const char*
 api: DK_MidHook | void* | void*, FNPTR
 api: DK_MidHook2 | void* | void*, FNPTR, void*
@@ -66,6 +70,7 @@ api: DK_Net_SendToServer | bool | uint64_t, uint16_t, const uint8_t*, uint32_t
 api: DK_Net_SyncGetVar | bool | const char*, char*, uint32_t
 api: DK_Net_SyncSetVar | void | const char*, const char*
 api: DK_Nop | void* | void*, size_t
+api: DK_NotifyResyncComplete | void | void
 api: DK_Overlay_ExecuteCommand | bool | const char*
 api: DK_Overlay_IsMenuOpen | bool | void
 api: DK_Overlay_RegisterCommand | void | const char*, FNPTR, const char*
@@ -103,11 +108,13 @@ api: DK_Profiler_PrintReport | void | void
 api: DK_Profiler_Reset | void | void
 api: DK_Profiler_SetEnabled | void | bool
 api: DK_RegisterChainedMidHook | bool | void*, FNPTR, int, const char*
+api: DK_RegisterSessionResetCallback | bool | FNPTR, void*
 api: DK_Resolve | void* | const char*, uintptr_t
 api: DK_ResolvePattern | void* | const char*, const char*, uintptr_t
 api: DK_RestorePatch | bool | void*
 api: DK_Rpc_AuthorizeCaller | void | uint32_t, bool
 api: DK_Rpc_PackFrame | uint32_t | uint32_t, uint32_t, uint32_t, const uint8_t*, uint32_t, uint8_t*, uint32_t
+api: DK_Rpc_PackFrame64 | uint32_t | uint32_t, uint32_t, uint64_t, const uint8_t*, uint32_t, uint8_t*, uint32_t
 api: DK_Rpc_SetTokenBucketParams | void | double, double
 api: DK_Scheduler_Cancel | bool | uint64_t
 api: DK_Scheduler_Enqueue | uint64_t | FNPTR, void*
@@ -127,6 +134,7 @@ api: DK_Store_SetInt | void | const char*, const char*, int64_t
 api: DK_Store_SetString | void | const char*, const char*, const char*
 api: DK_Unhook | bool | void*
 api: DK_UnpatchAll | void | void
+api: DK_UnregisterSessionResetCallback | bool | FNPTR
 api: DK_Vulkan_ConfigureLayerEnvironment | bool | const char*, const char*
 api: DK_Vulkan_GenerateLayerManifest | bool | const char*, const char*, const char*, const char*
 api: DK_Watchdog_Heartbeat | void | void

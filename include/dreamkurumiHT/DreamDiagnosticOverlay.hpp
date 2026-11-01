@@ -30,6 +30,7 @@
 #include "DreamPlayerRegistry.hpp"
 #include "DreamWindowSync.hpp"
 #include "DreamNetStateTracker.hpp"
+#include "DreamSessionSync.hpp"
 
 namespace dreamkurumi {
 
@@ -239,6 +240,9 @@ private:
     }
 
     static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        if (msg == WM_NCHITTEST) {
+            return HTTRANSPARENT; // Let all mouse clicks and movements fall through to Enshrouded
+        }
         return DefWindowProcW(hWnd, msg, wParam, lParam);
     }
 
@@ -255,12 +259,13 @@ private:
         wc.lpszClassName = CLASS_NAME;
         RegisterClassExW(&wc);
 
+        // Standalone layered popup window (hWndParent = NULL to prevent Win32 input queue thread attachment)
         m_hWnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             CLASS_NAME, L"DreamDiagnosticHUD",
             WS_POPUP,
             0, 0, HUD_WIDTH, HUD_HEIGHT,
-            nullptr, nullptr, hInstance, nullptr
+            NULL, nullptr, hInstance, nullptr
         );
 
         if (!m_hWnd) {
@@ -299,6 +304,17 @@ private:
 
     void WorkerLoop() {
         while (m_workerRunning.load()) {
+            DreamGnsTransportHook::InstallHooks();
+
+            // Actively pump Win32 messages on this thread to prevent input queue starvation
+            if (m_hWnd) {
+                MSG msg;
+                while (PeekMessageW(&msg, m_hWnd, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+
             if (m_visible.load() && m_hWnd) {
                 RedrawHud();
             }
@@ -308,6 +324,8 @@ private:
 
     void RedrawHud() {
         if (!m_hWnd || !IsWindow(m_hWnd)) return;
+        std::lock_guard<std::mutex> lock(m_redrawMutex);
+        if (!m_visible.load()) return;
 
         HWND hTargetWnd = FindWindowW(nullptr, L"Enshrouded");
         if (!hTargetWnd || !IsWindow(hTargetWnd)) {
@@ -321,7 +339,7 @@ private:
         if (hTargetWnd && IsWindow(hTargetWnd)) {
             RECT rc = {0};
             if (GetWindowRect(hTargetWnd, &rc)) {
-                // 1. Minimized check (Iconic or coordinates pushed off-screen)
+                // 1. Minimized check (Iconic or coordinates pushed off-screen or hidden)
                 if (IsIconic(hTargetWnd) || rc.left <= -30000 || !IsWindowVisible(hTargetWnd)) {
                     if (IsWindowVisible(m_hWnd)) {
                         ShowWindow(m_hWnd, SW_HIDE);
@@ -331,9 +349,7 @@ private:
 
                 // 2. Foreground check: if user switched to another app (Discord, Chrome, etc.), hide overlay
                 HWND fgWnd = GetForegroundWindow();
-                DWORD fgPid = 0;
-                if (fgWnd) GetWindowThreadProcessId(fgWnd, &fgPid);
-                if (fgPid != GetCurrentProcessId()) {
+                if (fgWnd && fgWnd != hTargetWnd && fgWnd != m_hWnd) {
                     if (IsWindowVisible(m_hWnd)) {
                         ShowWindow(m_hWnd, SW_HIDE);
                     }
@@ -381,6 +397,15 @@ private:
         uint32_t* pTextPixels = nullptr;
         HBITMAP hTextBitmap = CreateDIBSection(hScreenDC, &bmi, DIB_RGB_COLORS, (void**)&pTextPixels, NULL, 0);
         HGDIOBJ hOldTextBitmap = SelectObject(hTextDC, hTextBitmap);
+
+        if (!pPixels || !pTextPixels) {
+            if (hTextBitmap) { SelectObject(hTextDC, hOldTextBitmap); DeleteObject(hTextBitmap); }
+            if (hBitmap) { SelectObject(hMemDC, hOldBitmap); DeleteObject(hBitmap); }
+            DeleteDC(hTextDC);
+            DeleteDC(hMemDC);
+            ReleaseDC(NULL, hScreenDC);
+            return;
+        }
 
         // Draw Dark Slate rounded box with Cyan glowing border
         const int radius = 12;
@@ -433,8 +458,10 @@ private:
         DrawTextW(hTextDC, L"DREAMKURUMI DIAGNOSTICS (F9)", -1, &rcTitle, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
         SetTextColor(hTextDC, RGB(103, 232, 249)); // Cyan 300
-        RECT rcVer = {HUD_WIDTH - 65, 12, HUD_WIDTH - 16, 32};
-        DrawTextW(hTextDC, L"v3.9.0", -1, &rcVer, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
+        wchar_t bufVer[32];
+        swprintf(bufVer, 32, L"v%hs", DREAM_FRAMEWORK_VERSION);
+        RECT rcVer = {HUD_WIDTH - 120, 12, HUD_WIDTH - 16, 32};
+        DrawTextW(hTextDC, bufVer, -1, &rcVer, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
 
         // Divider lines directly onto background
         for (int x = 16; x < HUD_WIDTH - 16; ++x) {
@@ -461,6 +488,10 @@ private:
             DrawTextW(hTextDC, val, -1, &rcV, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
         };
 
+        bool isStale = DreamSessionSync::Instance().IsSessionStale();
+        uint64_t epoch = DreamSessionSync::Instance().GetServerSessionEpoch();
+        bool isHeartbeatAlive = DreamSessionSync::Instance().IsHeartbeatAlive();
+
         if (m_isDedicatedServer) {
             drawRow(46, L"Engine Mode:", L"Dedicated Server", RGB(52, 211, 153));
             size_t playerCount = DreamPlayerRegistry::Instance().GetPlayerCount();
@@ -474,11 +505,16 @@ private:
             drawRow(46, L"Engine Mode:", L"Vulkan 1.3 Client", RGB(52, 211, 153));
             auto netState = DreamNetStateTracker::Instance().GetState();
             int32_t ping = DreamNetStateTracker::Instance().GetPingMs();
-            if (netState == EngineConnectionState::Connected || DreamGnsTransportHook::IsConnected()) {
+
+            if (epoch > 0 && !isHeartbeatAlive) {
+                drawRow(72, L"Server Connection:", L"Server Unreachable / Rebooting...", RGB(248, 113, 113));
+            } else if (isStale) {
+                drawRow(72, L"Server Connection:", L"Reconnected (Safe Mode)", RGB(251, 191, 36));
+            } else if (netState == EngineConnectionState::Connected || DreamGnsTransportHook::IsConnected() || DreamNetStateTracker::Instance().IsClientConnectedToRemoteServer() || epoch > 0) {
                 if (ping >= 0) {
                     swprintf(bufVal, 64, L"Connected (GNS) \x2022 %dms", ping);
                 } else {
-                    swprintf(bufVal, 64, L"Connected (GNS)");
+                    swprintf(bufVal, 64, L"Connected (Dedicated Server)");
                 }
                 drawRow(72, L"Server Connection:", bufVal, RGB(52, 211, 153));
             } else if (netState == EngineConnectionState::Connecting || netState == EngineConnectionState::FindingRoute) {
@@ -502,9 +538,17 @@ private:
 
         // Footer Text
         SelectObject(hTextDC, hFootFont);
-        SetTextColor(hTextDC, RGB(6, 182, 212)); // Cyan
         RECT rcFoot = {18, 194, HUD_WIDTH - 18, 214};
-        DrawTextW(hTextDC, L"\x2022 Press [F9] to hide overlay", -1, &rcFoot, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        if (epoch > 0 && !isHeartbeatAlive) {
+            SetTextColor(hTextDC, RGB(248, 113, 113)); // Light red
+            DrawTextW(hTextDC, L"\x2022 Server heartbeat lost. Awaiting restart...", -1, &rcFoot, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        } else if (DreamSessionSync::Instance().IsSessionStale()) {
+            SetTextColor(hTextDC, RGB(251, 191, 36)); // Amber
+            DrawTextW(hTextDC, L"\x2022 Server restarted. Auto-resyncing...", -1, &rcFoot, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        } else {
+            SetTextColor(hTextDC, RGB(6, 182, 212)); // Cyan
+            DrawTextW(hTextDC, L"\x2022 Press [F9] to hide overlay", -1, &rcFoot, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        }
 
         // Alpha-composite pristine text on top of obsidian background
         for (int y = 0; y < HUD_HEIGHT; ++y) {
@@ -547,8 +591,11 @@ private:
             m_hWnd,
             HWND_TOPMOST,
             posX, posY, HUD_WIDTH, HUD_HEIGHT,
-            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING | SWP_ASYNCWINDOWPOS
+            SWP_NOACTIVATE | SWP_NOSENDCHANGING | SWP_ASYNCWINDOWPOS
         );
+        if (!IsWindowVisible(m_hWnd) && m_visible.load()) {
+            ShowWindow(m_hWnd, SW_SHOWNOACTIVATE);
+        }
 
         SelectObject(hTextDC, hOldTextBitmap);
         DeleteObject(hTextBitmap);
@@ -570,7 +617,8 @@ private:
     std::atomic<bool> m_workerRunning{false};
 
     mutable std::mutex m_mutex;
-    std::atomic<bool> m_enabled{true};
+    mutable std::mutex m_redrawMutex;
+    std::atomic<bool> m_enabled{false};
     std::atomic<bool> m_visible{false};
     int m_toggleKey{0x78}; // VK_F9
     bool m_isDedicatedServer{false};

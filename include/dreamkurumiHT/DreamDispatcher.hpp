@@ -181,7 +181,7 @@ public:
 
 private:
     void SortAndRebuildSnapshot() {
-        std::sort(m_subscribers.begin(), m_subscribers.end(),
+        std::stable_sort(m_subscribers.begin(), m_subscribers.end(),
             [](const Subscriber& a, const Subscriber& b) {
                 return static_cast<int>(a.priority) < static_cast<int>(b.priority);
             });
@@ -401,7 +401,7 @@ public:
 
 private:
     void SortAndRebuildSnapshot() {
-        std::sort(m_subscribers.begin(), m_subscribers.end(),
+        std::stable_sort(m_subscribers.begin(), m_subscribers.end(),
             [](const Subscriber& a, const Subscriber& b) {
                 return static_cast<int>(a.priority) < static_cast<int>(b.priority);
             });

@@ -52,7 +52,27 @@ public:
         std::string AsString(const std::string& def = "") const {
             std::string s = Trim(raw);
             if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\''))) {
-                return s.substr(1, s.size() - 2);
+                bool isDouble = (s.front() == '"');
+                std::string inner = s.substr(1, s.size() - 2);
+                if (!isDouble) return inner; // single quotes are literal in TOML
+                std::string res;
+                res.reserve(inner.size());
+                for (size_t i = 0; i < inner.size(); ++i) {
+                    if (inner[i] == '\\' && i + 1 < inner.size()) {
+                        char c = inner[++i];
+                        switch (c) {
+                            case '"':  res += '"'; break;
+                            case '\\': res += '\\'; break;
+                            case 'n':  res += '\n'; break;
+                            case 'r':  res += '\r'; break;
+                            case 't':  res += '\t'; break;
+                            default:   res += '\\'; res += c; break;
+                        }
+                    } else {
+                        res += inner[i];
+                    }
+                }
+                return res;
             }
             return s.empty() ? def : s;
         }
@@ -114,12 +134,21 @@ public:
             char quoteChar = 0;
             size_t commentPos = std::string::npos;
             for (size_t i = 0; i < line.size(); ++i) {
-                if ((line[i] == '"' || line[i] == '\'') && (i == 0 || line[i - 1] != '\\')) {
-                    if (!inQuotes) {
-                        inQuotes = true;
-                        quoteChar = line[i];
-                    } else if (line[i] == quoteChar) {
-                        inQuotes = false;
+                if (line[i] == '"' || line[i] == '\'') {
+                    size_t slashCount = 0;
+                    size_t j = i;
+                    while (j > 0 && line[j - 1] == '\\') {
+                        slashCount++;
+                        j--;
+                    }
+                    bool isEscaped = (slashCount % 2 != 0);
+                    if (!isEscaped) {
+                        if (!inQuotes) {
+                            inQuotes = true;
+                            quoteChar = line[i];
+                        } else if (line[i] == quoteChar) {
+                            inQuotes = false;
+                        }
                     }
                 } else if ((line[i] == '#' || line[i] == ';') && !inQuotes) {
                     commentPos = i;

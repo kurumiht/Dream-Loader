@@ -108,6 +108,20 @@ public:
         m_originalVtable = *reinterpret_cast<void***>(m_instance);
         if (!m_originalVtable) return false;
 
+        // Query readable page boundaries to clamp methodCount and prevent reading into unmapped pages
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(m_originalVtable, &mbi, sizeof(mbi))) {
+            uintptr_t pageEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+            uintptr_t vtableStart = reinterpret_cast<uintptr_t>(m_originalVtable);
+            if (vtableStart < pageEnd) {
+                size_t maxSafeMethods = (pageEnd - vtableStart) / sizeof(void*);
+                if (methodCount > maxSafeMethods) {
+                    methodCount = maxSafeMethods;
+                }
+            }
+        }
+        if (methodCount == 0) return false;
+
         m_methodCount = methodCount;
         m_shadowVtable.resize(m_methodCount);
         for (size_t i = 0; i < m_methodCount; ++i) {

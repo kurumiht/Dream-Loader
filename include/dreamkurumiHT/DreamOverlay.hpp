@@ -22,6 +22,7 @@
 #include "DreamPlayerRegistry.hpp"
 #include "DreamBackup.hpp"
 #include "DreamDiagnosticOverlay.hpp"
+#include "DreamSessionSync.hpp"
 #include <psapi.h>
 
 namespace dreamkurumi {
@@ -72,7 +73,7 @@ public:
         bool newState = !m_isConsoleOpen.load();
         m_isConsoleOpen.store(newState);
         if (newState) {
-            DreamLog::Instance().AllocateConsoleWindow("dreamkurumiHT Diagnostics Console (Client)");
+            DreamLog::Instance().AllocateConsoleWindow("dreamkurumiHT Diagnostics Console v" DREAM_FRAMEWORK_VERSION " (Client)");
         }
         if (m_onConsoleToggle) {
             m_onConsoleToggle(newState);
@@ -1240,6 +1241,13 @@ public:
         RegisterCommand("?", [this](const std::string& args) { ExecuteCommand("help " + args); });
         RegisterCommand("m", [this](const std::string& args) { ExecuteCommand("mods " + args); });
         RegisterCommand("l", [this](const std::string& args) { ExecuteCommand("lua " + args); });
+        auto reconnectHandler = [](const std::string&) {
+            printf("\n\033[96m[Dream CMD] Triggering session resync and flushing ECS lookup caches...\033[0m\n");
+            DreamSessionSync::Instance().TriggerCleanReconnect();
+        };
+        RegisterCommand("reconnect", reconnectHandler, "Cleanly resynchronizes session state after dedicated server reboot");
+        RegisterCommand("resync", reconnectHandler, "Alias for reconnect");
+
         RegisterCommand("exit", [](const std::string&) {
             printf("\n\033[93m[Dream CMD] Shutting down application cleanly...\033[0m\n");
             fflush(stdout);
