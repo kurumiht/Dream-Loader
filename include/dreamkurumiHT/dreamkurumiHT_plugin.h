@@ -119,6 +119,7 @@ typedef void* (*FnDK_MidHook)(void* target, DK_MidHookCallback cb);
 typedef void* (*FnDK_MidHook2)(void* target, DK_MidHook2Callback cb, void* userData);
 typedef bool (*FnDK_MidUnhook)(void* hookHandle);
 typedef bool (*FnDK_RegisterChainedMidHook)(void* target, DK_MidHookCallback cb, int priority, const char* name);
+typedef bool (*FnDK_UnregisterChainedMidHook)(void* target, const char* name);
 typedef void* (*FnDK_PatchBytes)(void* target, const uint8_t* bytes, size_t count);
 typedef void* (*FnDK_Nop)(void* target, size_t count);
 typedef bool (*FnDK_RestorePatch)(void* patchHandle);
@@ -330,6 +331,7 @@ public:
         BIND_DK(DK_MidHook2);
         BIND_DK(DK_MidUnhook);
         BIND_DK(DK_RegisterChainedMidHook);
+        BIND_DK(DK_UnregisterChainedMidHook);
         BIND_DK(DK_PatchBytes);
         BIND_DK(DK_Nop);
         BIND_DK(DK_RestorePatch);
@@ -495,6 +497,7 @@ public:
     FnDK_MidHook2 pfn_DK_MidHook2 = nullptr;
     FnDK_MidUnhook pfn_DK_MidUnhook = nullptr;
     FnDK_RegisterChainedMidHook pfn_DK_RegisterChainedMidHook = nullptr;
+    FnDK_UnregisterChainedMidHook pfn_DK_UnregisterChainedMidHook = nullptr;
     FnDK_PatchBytes pfn_DK_PatchBytes = nullptr;
     FnDK_Nop pfn_DK_Nop = nullptr;
     FnDK_RestorePatch pfn_DK_RestorePatch = nullptr;
@@ -768,6 +771,14 @@ inline bool RegisterChainedMidHook(void* target, DK_MidHookCallback cb, int prio
     auto& host = PluginHost::Instance();
     if (host.Init() && host.pfn_DK_RegisterChainedMidHook) {
         return host.pfn_DK_RegisterChainedMidHook(target, cb, priority, name);
+    }
+    return false;
+}
+
+inline bool UnregisterChainedMidHook(void* target, const char* name) {
+    auto& host = PluginHost::Instance();
+    if (host.Init() && host.pfn_DK_UnregisterChainedMidHook) {
+        return host.pfn_DK_UnregisterChainedMidHook(target, name);
     }
     return false;
 }

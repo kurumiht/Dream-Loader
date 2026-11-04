@@ -897,11 +897,39 @@ public:
 
         auto& chain = it->second;
         chain->subscribers.push_back({ name, cb, priority });
-        std::sort(chain->subscribers.begin(), chain->subscribers.end(), [](const Subscriber& a, const Subscriber& b) {
+        std::stable_sort(chain->subscribers.begin(), chain->subscribers.end(), [](const Subscriber& a, const Subscriber& b) {
             return a.priority > b.priority;
         });
         chain->subscribersSnapshot.store(std::make_shared<const std::vector<Subscriber>>(chain->subscribers));
         return true;
+    }
+
+    bool Unregister(void* target, const std::string& name) {
+        if (!target || name.empty()) return false;
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        auto it = m_chains.find(target);
+        if (it == m_chains.end()) return false;
+
+        auto& chain = it->second;
+        size_t prevCount = chain->subscribers.size();
+        chain->subscribers.erase(
+            std::remove_if(chain->subscribers.begin(), chain->subscribers.end(),
+                [&](const Subscriber& s) { return s.name == name; }),
+            chain->subscribers.end()
+        );
+
+        if (chain->subscribers.empty()) {
+            chain->midHook.Disable();
+            m_chains.erase(it);
+            return true;
+        }
+
+        chain->subscribersSnapshot.store(
+            std::make_shared<const std::vector<Subscriber>>(chain->subscribers),
+            std::memory_order_release
+        );
+        return chain->subscribers.size() < prevCount;
     }
 
 private:

@@ -122,6 +122,11 @@ DK_API bool DK_RegisterChainedMidHook(void* target, DK_MidHookCallback cb, int p
     return dreamkurumi::DreamChainedHookPipeline::Instance().Register(target, lambdaCb, priority, name ? name : "");
 }
 
+DK_API bool DK_UnregisterChainedMidHook(void* target, const char* name) {
+    if (!target || !name) return false;
+    return dreamkurumi::DreamChainedHookPipeline::Instance().Unregister(target, name);
+}
+
 // Anti-Crash Sandbox Shield
 DK_API bool DK_ExecuteProtected(const char* modName, void (*cb)(void* userData), void* userData) {
     if (!cb) return false;

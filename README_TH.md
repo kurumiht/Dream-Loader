@@ -1,7 +1,7 @@
 # dreamkurumiHT Framework (Dream Core)
 
 > **ระบบ Modding Runtime และ Native Harmony Hooking Framework สำหรับ Enshrouded (C++20 / x64 Windows)**  
-> **เวอร์ชัน:** `3.9.1` | **สถาปัตยกรรม:** x64 Windows | **รองรับเกม:** Enshrouded 1.0+ (Client และ Dedicated Server)
+> **เวอร์ชัน:** `3.9.2` | **สถาปัตยกรรม:** x64 Windows | **รองรับเกม:** Enshrouded 1.0+ (Client และ Dedicated Server)
 
 ---
 
@@ -9,11 +9,11 @@
   <b>Language Switcher / สลับภาษา:</b><br>
   <a href="README.md">🇬🇧 <b>English (Default)</b></a> •
   <a href="README_TH.md">🇹🇭 <b>ภาษาไทย (Thai)</b></a><br><br>
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.1/Dream-Core-v3.9.1.zip">
-    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.9.1%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core Framework" />
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.2/Dream-Core-v3.9.2.zip">
+    <img src="https://img.shields.io/badge/Download-Dream--Core%20v3.9.2%20(Framework)-brightgreen?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-Core Framework" />
   </a>
   &nbsp;&nbsp;
-  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.1/Dream-AoE-Harvest-v1.5.1.zip">
+  <a href="https://github.com/kurumiht/Dream-Loader/releases/download/v3.9.2/Dream-AoE-Harvest-v1.5.1.zip">
     <img src="https://img.shields.io/badge/Download-Dream--AoE--Harvest%20v1.5.1%20(Mod)-blue?style=for-the-badge&logo=windows" alt="ดาวน์โหลด Dream-AoE-Harvest Mod" />
   </a>
 </p>

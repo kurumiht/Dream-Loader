@@ -82,17 +82,36 @@ public:
             std::string s = Trim(raw);
             if (s.size() >= 2 && s.front() == '[' && s.back() == ']') {
                 std::string inner = s.substr(1, s.size() - 2);
-                std::stringstream ss(inner);
-                std::string item;
-                while (std::getline(ss, item, ',')) {
-                    std::string trimmed = Trim(item);
-                    if (trimmed.size() >= 2 && ((trimmed.front() == '"' && trimmed.back() == '"') || (trimmed.front() == '\'' && trimmed.back() == '\''))) {
-                        trimmed = trimmed.substr(1, trimmed.size() - 2);
-                    }
-                    if (!trimmed.empty()) {
-                        result.push_back(trimmed);
+                std::string cur;
+                char activeQuote = 0;
+                for (size_t i = 0; i < inner.size(); ++i) {
+                    char c = inner[i];
+                    if (activeQuote) {
+                        if (c == activeQuote && (i == 0 || inner[i - 1] != '\\')) {
+                            activeQuote = 0;
+                        } else {
+                            cur += c;
+                        }
+                    } else {
+                        if (c == '"' || c == '\'') {
+                            activeQuote = c;
+                        } else if (c == ',') {
+                            std::string trimmed = Trim(cur);
+                            if (trimmed.size() >= 2 && ((trimmed.front() == '"' && trimmed.back() == '"') || (trimmed.front() == '\'' && trimmed.back() == '\''))) {
+                                trimmed = trimmed.substr(1, trimmed.size() - 2);
+                            }
+                            if (!trimmed.empty()) result.push_back(trimmed);
+                            cur.clear();
+                        } else {
+                            cur += c;
+                        }
                     }
                 }
+                std::string trimmed = Trim(cur);
+                if (trimmed.size() >= 2 && ((trimmed.front() == '"' && trimmed.back() == '"') || (trimmed.front() == '\'' && trimmed.back() == '\''))) {
+                    trimmed = trimmed.substr(1, trimmed.size() - 2);
+                }
+                if (!trimmed.empty()) result.push_back(trimmed);
             }
             return result;
         }

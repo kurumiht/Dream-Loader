@@ -42,6 +42,7 @@ public:
 
     DreamAdaptiveBatchThrottler() noexcept {
         QueryPerformanceFrequency(&m_qpcFreq);
+        if (m_qpcFreq.QuadPart <= 0) m_qpcFreq.QuadPart = 10000000LL;
         QueryPerformanceCounter(&m_tickEnterTime);
     }
 
@@ -73,7 +74,7 @@ public:
     size_t ProcessAdaptiveTickSlice(ExecuteFn&& executeEntity) {
         LARGE_INTEGER now{};
         QueryPerformanceCounter(&now);
-        const double freq = static_cast<double>(m_qpcFreq.QuadPart);
+        const double freq = (m_qpcFreq.QuadPart > 0) ? static_cast<double>(m_qpcFreq.QuadPart) : 10000000.0;
 
         // Measure actual CPU time already spent by Keen Engine in this tick
         double engineUsedMs = static_cast<double>(now.QuadPart - m_tickEnterTime.QuadPart) * 1000.0 / freq;

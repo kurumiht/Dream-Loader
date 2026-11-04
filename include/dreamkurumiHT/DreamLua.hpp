@@ -63,6 +63,7 @@ private:
     // Active MidHooks from Lua
     uint32_t m_nextHookId{0};
     std::unordered_map<uint32_t, std::unique_ptr<LuaMidHookEntry>> m_luaHooks;
+    int m_midHookDispatcherRef{LUA_NOREF};
 
     // Active EventBus Subscriptions from Lua
     std::vector<LuaEventSubEntry> m_luaEventSubs;
@@ -165,7 +166,7 @@ private:
         return yyjson_mut_null(doc);
     }
 
-    // Dispatcher for in-engine Native MidHooks to Lua callbacks
+    // Dispatcher for in-engine Native MidHooks to Lua callbacks (Zero-Allocation FFI Fast-Path)
     static void LuaMidHookDispatcher(DreamCpuContext& ctx, void* userData) {
         auto* entry = reinterpret_cast<LuaMidHookEntry*>(userData);
         if (!entry) return;
@@ -175,13 +176,28 @@ private:
         lua_State* L = engine.GetState();
         if (!L || entry->callbackRef == LUA_NOREF) return;
 
+        // Zero-Allocation FFI Dispatcher
+        if (engine.m_midHookDispatcherRef != LUA_NOREF) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, engine.m_midHookDispatcherRef);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, entry->callbackRef);
+            lua_pushlightuserdata(L, &ctx);
+            DreamCrashGuard::ExecuteSafely("LuaMidHook", [&]() {
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    const char* err = lua_tostring(L, -1);
+                    DREAM_LOG_ERROR("[Lua MidHook Error] %s", err ? err : "Unknown");
+                    lua_pop(L, 1);
+                }
+            });
+            return;
+        }
+
         lua_rawgeti(L, LUA_REGISTRYINDEX, entry->callbackRef);
         if (!lua_isfunction(L, -1)) {
             lua_pop(L, 1);
             return;
         }
 
-        // Push ctx table to Lua
+        // Fallback: Legacy table creation
         lua_newtable(L);
         auto pushHex = [&](const char* name, uint64_t val) {
             char buf[32];
@@ -877,6 +893,88 @@ public:
             });
         }
 
+        // Initialize LuaJIT FFI binding for DreamCpuContext (Zero Allocation Hot-Path)
+        const char* ffiBootstrap = R"lua(
+            local ffi = require("ffi")
+            ffi.cdef[[
+            #pragma pack(push, 1)
+            typedef union {
+                float    f32[8];
+                double   f64[4];
+                uint32_t u32[8];
+                uint64_t u64[4];
+                uint8_t  u8[32];
+            } DreamYmmRegister;
+
+            typedef struct {
+                DreamYmmRegister ymm[16];
+                uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+                uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax, rflags;
+            } DreamCpuContext;
+            #pragma pack(pop)
+            ]]
+
+            local pctx_t = ffi.typeof("DreamCpuContext*")
+            local fmt = string.format
+            local tonum = tonumber
+
+            local mt = {
+                __index = function(self, key)
+                    if key == "rcx_hex" then return fmt("0x%X", tonum(self.rcx))
+                    elseif key == "rdx_hex" then return fmt("0x%X", tonum(self.rdx))
+                    elseif key == "rax_hex" then return fmt("0x%X", tonum(self.rax))
+                    elseif key == "rbx_hex" then return fmt("0x%X", tonum(self.rbx))
+                    elseif key == "rsi_hex" then return fmt("0x%X", tonum(self.rsi))
+                    elseif key == "rdi_hex" then return fmt("0x%X", tonum(self.rdi))
+                    elseif key == "rbp_hex" then return fmt("0x%X", tonum(self.rbp))
+                    elseif key == "r8_hex" then return fmt("0x%X", tonum(self.r8))
+                    elseif key == "r9_hex" then return fmt("0x%X", tonum(self.r9))
+                    elseif key == "r10_hex" then return fmt("0x%X", tonum(self.r10))
+                    elseif key == "r11_hex" then return fmt("0x%X", tonum(self.r11))
+                    elseif key == "r12_hex" then return fmt("0x%X", tonum(self.r12))
+                    elseif key == "r13_hex" then return fmt("0x%X", tonum(self.r13))
+                    elseif key == "r14_hex" then return fmt("0x%X", tonum(self.r14))
+                    elseif key == "r15_hex" then return fmt("0x%X", tonum(self.r15))
+                    end
+                    local xmmIdx = key:match("^xmm(%d+)$")
+                    if xmmIdx then
+                        local idx = tonum(xmmIdx)
+                        if idx and idx >= 0 and idx < 16 then return self.ymm[idx].f32[0] end
+                    end
+                    local ymmLo = key:match("^ymm(%d+)_lo$")
+                    if ymmLo then
+                        local idx = tonum(ymmLo)
+                        if idx and idx >= 0 and idx < 16 then return self.ymm[idx].f32[0] end
+                    end
+                    local ymmHi = key:match("^ymm(%d+)_hi$")
+                    if ymmHi then
+                        local idx = tonum(ymmHi)
+                        if idx and idx >= 0 and idx < 16 then return self.ymm[idx].f32[4] end
+                    end
+                    return nil
+                end,
+                __tostring = function(self)
+                    return fmt("DreamCpuContext(rax=0x%X, rcx=0x%X, rdx=0x%X)", tonum(self.rax), tonum(self.rcx), tonum(self.rdx))
+                end
+            }
+
+            ffi.metatype("DreamCpuContext", mt)
+
+            function __dream_dispatch_midhook(cb, ptr)
+                local ctx = ffi.cast(pctx_t, ptr)
+                return cb(ctx)
+            end
+        )lua";
+
+        if (luaL_dostring(m_L, ffiBootstrap) == 0) {
+            lua_getglobal(m_L, "__dream_dispatch_midhook");
+            if (lua_isfunction(m_L, -1)) {
+                m_midHookDispatcherRef = luaL_ref(m_L, LUA_REGISTRYINDEX);
+            } else {
+                lua_pop(m_L, 1);
+            }
+        }
+
         m_initialized = true;
         DREAM_LOG_INFO("LuaJIT 2.1 Engine initialized successfully with JIT, yyjson, Native MidHooks & RE Suite!");
         return true;
@@ -929,6 +1027,10 @@ public:
         ResetRuntimeState();
 
         if (m_L) {
+            if (m_midHookDispatcherRef != LUA_NOREF) {
+                luaL_unref(m_L, LUA_REGISTRYINDEX, m_midHookDispatcherRef);
+                m_midHookDispatcherRef = LUA_NOREF;
+            }
             lua_close(m_L);
             m_L = nullptr;
         }
@@ -955,6 +1057,69 @@ public:
                 success = false;
             } else {
                 success = true;
+            }
+        }, [&]() {
+            if (errorOut) *errorOut = "Lua execution intercepted by CrashGuard";
+            success = false;
+        });
+
+        return success;
+    }
+
+    bool ExecuteExpression(const std::string& expr, std::string* resultOut = nullptr, std::string* errorOut = nullptr) {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (!m_initialized && !Initialize()) return false;
+
+        bool success = false;
+        DreamCrashGuard::Execute("DreamLua", [&]() {
+            int topBefore = lua_gettop(m_L);
+
+            // First attempt: evaluate as expression with "return "
+            std::string tryCode = "return " + expr;
+            int status = luaL_loadstring(m_L, tryCode.c_str());
+            if (status != 0) {
+                // Discard syntax error from "return " and try raw statement
+                lua_pop(m_L, 1);
+                status = luaL_loadstring(m_L, expr.c_str());
+            }
+
+            if (status == 0) {
+                status = lua_pcall(m_L, 0, LUA_MULTRET, 0);
+            }
+
+            if (status != 0) {
+                const char* err = lua_tostring(m_L, -1);
+                std::string errStr = err ? err : "Unknown Lua error";
+                if (errorOut) *errorOut = errStr;
+                DREAM_LOG_ERROR("[Lua Error] %s", errStr.c_str());
+                lua_pop(m_L, 1);
+                success = false;
+            } else {
+                success = true;
+                int topAfter = lua_gettop(m_L);
+                int numResults = topAfter - topBefore;
+                if (resultOut) {
+                    if (numResults <= 0) {
+                        *resultOut = "(nil)";
+                    } else {
+                        std::string res;
+                        for (int i = 1; i <= numResults; ++i) {
+                            int idx = topBefore + i;
+                            if (i > 1) res += "\t";
+                            if (lua_isstring(m_L, idx)) {
+                                res += lua_tostring(m_L, idx);
+                            } else if (lua_isboolean(m_L, idx)) {
+                                res += (lua_toboolean(m_L, idx) ? "true" : "false");
+                            } else if (lua_isnil(m_L, idx)) {
+                                res += "nil";
+                            } else {
+                                res += luaL_typename(m_L, idx);
+                            }
+                        }
+                        *resultOut = res;
+                    }
+                }
+                lua_settop(m_L, topBefore);
             }
         }, [&]() {
             if (errorOut) *errorOut = "Lua execution intercepted by CrashGuard";

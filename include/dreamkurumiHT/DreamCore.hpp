@@ -17,10 +17,10 @@ namespace dreamkurumi {
 //   "-rc"      : Release candidate after in-game live verification
 //   "" (clean) : Stable production release
 // ============================================================================
-#define DREAM_FRAMEWORK_VERSION       "3.9.1"
+#define DREAM_FRAMEWORK_VERSION       "3.9.2"
 #define DREAM_FRAMEWORK_VERSION_MAJOR 3
 #define DREAM_FRAMEWORK_VERSION_MINOR 9
-#define DREAM_FRAMEWORK_VERSION_PATCH 1
+#define DREAM_FRAMEWORK_VERSION_PATCH 2
 #define DREAM_FRAMEWORK_VERSION_TAG   ""
 
 // ============================================================================
@@ -79,6 +79,24 @@ public:
 
     __forceinline static bool IsValidPtr(const void* ptr, size_t size = 8) noexcept {
         return IsSafeToProbeAddress(ptr, size);
+    }
+
+    __forceinline static bool IsCommittedAndReadable(const void* addr, size_t size = 1) noexcept {
+        if (!IsSafeToProbeAddress(addr, size)) return false;
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(addr, &mbi, sizeof(mbi))) return false;
+        if (mbi.State != MEM_COMMIT || mbi.Protect == 0 ||
+            (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return false;
+        const uintptr_t u = reinterpret_cast<uintptr_t>(addr);
+        const uintptr_t regEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        return (u + size) <= regEnd;
+    }
+
+    template <typename T>
+    __forceinline static bool SafeRead(const void* src, T& outVal) noexcept {
+        if (!src || !IsCommittedAndReadable(src, sizeof(T))) return false;
+        outVal = *reinterpret_cast<const T*>(src);
+        return true;
     }
 
     static void* AllocateNearTarget(void* target, size_t size = 4096) {

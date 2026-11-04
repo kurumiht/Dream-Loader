@@ -134,6 +134,7 @@ api: DK_Store_SetInt | void | const char*, const char*, int64_t
 api: DK_Store_SetString | void | const char*, const char*, const char*
 api: DK_Unhook | bool | void*
 api: DK_UnpatchAll | void | void
+api: DK_UnregisterChainedMidHook | bool | void*, const char*
 api: DK_UnregisterSessionResetCallback | bool | FNPTR
 api: DK_Vulkan_ConfigureLayerEnvironment | bool | const char*, const char*
 api: DK_Vulkan_GenerateLayerManifest | bool | const char*, const char*, const char*, const char*

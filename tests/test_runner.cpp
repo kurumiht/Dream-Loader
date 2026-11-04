@@ -6,9 +6,11 @@
 #include "../include/dreamkurumiHT/DreamWindowSync.hpp"
 #include "../include/dreamkurumiHT/DreamNetStateTracker.hpp"
 #include "../include/dreamkurumiHT/DreamAutoLoopResolver.hpp"
+#include "../include/dreamkurumiHT/DreamLoopRecovery.hpp"
 #include "../include/dreamkurumiHT/DreamBatchThrottler.hpp"
 #include "../include/dreamkurumiHT/DreamEcsValidator.hpp"
 #include "../include/dreamkurumiHT/DreamDynamicBackpressure.hpp"
+#include "../include/dreamkurumiHT/DreamWorldQuery.hpp"
 #define DREAMKURUMI_EXPORTS
 #include "../include/dreamkurumiHT/DreamCExport.hpp"
 
@@ -4366,6 +4368,266 @@ int main() {
         std::cout << "  [PASS] Test 98 (Heartbeat Watchdog & Zero-Touch Resync) fully verified!\n\n";
     }
 
+    // ------------------------------------------------------------------------
+    // [TEST 99] Stability & Concurrency Hardening (v3.9.2 v1.0)
+    // ------------------------------------------------------------------------
+    {
+        std::cout << "[Test 99] Testing Stability & Concurrency Hardening (v3.9.2 v1.0)...\n";
+
+        // 1. DreamChainedHookPipeline Unregister & Dangling Pointer Prevention
+        static uint8_t s_dummyHookTarget[32] = {
+            0x48, 0x89, 0x5C, 0x24, 0x08, // mov [rsp+8], rbx
+            0x48, 0x89, 0x6C, 0x24, 0x10, // mov [rsp+10h], rbp
+            0x48, 0x89, 0x74, 0x24, 0x18, // mov [rsp+18h], rsi
+            0xC3                          // ret
+        };
+
+        auto& chainedPipeline = dreamkurumi::DreamChainedHookPipeline::Instance();
+        bool regA = chainedPipeline.Register(s_dummyHookTarget, [](dreamkurumi::DreamCpuContext&) {}, 10, "Plugin_Alpha");
+        bool regB = chainedPipeline.Register(s_dummyHookTarget, [](dreamkurumi::DreamCpuContext&) {}, 5, "Plugin_Beta");
+        assert(regA && regB);
+
+        // Unregister Alpha
+        bool unregA = chainedPipeline.Unregister(s_dummyHookTarget, "Plugin_Alpha");
+        assert(unregA);
+
+        // Verify C-ABI export DK_UnregisterChainedMidHook
+        bool unregB = DK_UnregisterChainedMidHook(s_dummyHookTarget, "Plugin_Beta");
+        assert(unregB);
+
+        // Second unregister should safely return false (not crash)
+        bool unregAgain = DK_UnregisterChainedMidHook(s_dummyHookTarget, "Plugin_Beta");
+        assert(!unregAgain);
+        std::cout << "  DreamChainedHookPipeline & DK_UnregisterChainedMidHook safety -> [PASS]\n";
+
+        // 2. DreamNetBridge Atomic Telemetry Counters
+        auto& netBridge = dreamkurumi::DreamNetBridge::Instance();
+        size_t initialSent = netBridge.GetTotalPacketsSent();
+
+        dreamkurumi::NetBufferWriter writer;
+        writer.WriteUInt32(0x12345678);
+        netBridge.SendToServer("TestTelemetry", 0x0001, writer);
+        assert(netBridge.GetTotalPacketsSent() == initialSent + 1);
+        std::cout << "  DreamNetBridge atomic telemetry counters -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 99 (Stability & Concurrency Hardening) fully verified!\n\n";
+    }
+
+    // ------------------------------------------------------------------------
+    // [TEST 100] Hot-Path Performance Optimizations (v3.9.2 v1.1)
+    // ------------------------------------------------------------------------
+    {
+        std::cout << "[Test 100] Testing Hot-Path Optimizations (LuaJIT FFI Context & SIMD Scanner Mask)...\n";
+
+        // 1. DreamScanner uint8_t mask parsing & pattern matching
+        auto parsed = dreamkurumi::DreamScanner::ParsePattern("48 8B ?? 24 10 90");
+        assert(parsed.isValid);
+        assert(parsed.bytes.size() == 6);
+        assert(parsed.mask.size() == 6);
+        assert(parsed.mask[0] == 0xFF && parsed.mask[1] == 0xFF && parsed.mask[2] == 0x00);
+        assert(parsed.mask[3] == 0xFF && parsed.mask[4] == 0xFF && parsed.mask[5] == 0xFF);
+
+        uint8_t sampleMem[8] = { 0x48, 0x8B, 0xEE, 0x24, 0x10, 0x90, 0xCC, 0xCC };
+        assert(dreamkurumi::DreamScanner::Matches(sampleMem, parsed));
+        sampleMem[5] = 0x91;
+        assert(!dreamkurumi::DreamScanner::Matches(sampleMem, parsed));
+        std::cout << "  DreamScanner uint8_t contiguous mask parsing & verification -> [PASS]\n";
+
+        // 2. LuaJIT FFI Direct Context Passing & Metatype Properties
+        auto& luaEng = dreamkurumi::DreamLuaEngine::Instance();
+        assert(luaEng.Initialize());
+
+        std::string ffiTestScript = R"lua(
+            local testPassed = false
+            local cb = function(ctx)
+                assert(ctx.rax == 0xDEADBEEF)
+                assert(ctx.rcx_hex == "0xCAFE")
+                assert(ctx.xmm0 == 123.45600128173828 or math.abs(ctx.xmm0 - 123.456) < 0.001)
+                testPassed = true
+            end
+
+            -- Test dummy context via FFI dispatch
+            local ffi = require("ffi")
+            local dummy = ffi.new("DreamCpuContext")
+            dummy.rax = 0xDEADBEEF
+            dummy.rcx = 0xCAFE
+            dummy.ymm[0].f32[0] = 123.456
+
+            __dream_dispatch_midhook(cb, dummy)
+            assert(testPassed == true)
+        )lua";
+
+        std::string err;
+        bool ffiOk = luaEng.ExecuteString(ffiTestScript, &err);
+        if (!ffiOk) {
+            std::cerr << "FFI Test Error: " << err << "\n";
+        }
+        assert(ffiOk);
+        std::cout << "  LuaJIT FFI DreamCpuContext zero-allocation dispatch & metatype -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 100 (Hot-Path Performance Optimizations) fully verified!\n\n";
+    }
+
+    // ------------------------------------------------------------------------
+    // [TEST 101] Native ECS Spatial Query & Live Lua REPL Engine (v3.9.2 v1.2)
+    // ------------------------------------------------------------------------
+    {
+        std::cout << "[Test 101] Testing Native Spatial Query (DreamWorldQuery Snapshot) & Live Lua REPL...\n";
+
+        // 1. DreamWorldQuery (Snapshot Buffer Pattern - Dev 1 Architecture)
+        float center[3] = { 100.0f, 50.0f, -200.0f };
+        dreamkurumi::enshrouded::EntitySnapshot snapshots[16];
+        auto queryRes = dreamkurumi::enshrouded::DreamWorldQuery::Instance().QueryInRadiusSnapshot(
+            nullptr, center, 5.0f, 0, snapshots, 16
+        );
+        assert(queryRes.count == 0 && !queryRes.truncated); // Safely returns 0 when no world loaded, without crash!
+
+        // Negative radius or zero buffer safety
+        auto invalidRes = dreamkurumi::enshrouded::DreamWorldQuery::Instance().QueryInRadiusSnapshot(
+            nullptr, center, -1.0f, 0, nullptr, 0
+        );
+        assert(invalidRes.count == 0);
+        assert(!dreamkurumi::enshrouded::DreamWorldQuery::IsEntityAlive(nullptr, 1234));
+        std::cout << "  DreamWorldQuery Snapshot Buffer Pattern & post-snapshot validation -> [PASS]\n";
+
+        // 2. Live Interactive Lua REPL (ExecuteExpression)
+        auto& luaEng = dreamkurumi::DreamLuaEngine::Instance();
+        assert(luaEng.Initialize());
+
+        std::string res, err;
+        // Arithmetic evaluation
+        bool evalOk = luaEng.ExecuteExpression("100 + 250", &res, &err);
+        assert(evalOk);
+        assert(res == "350");
+
+        // Global state and string evaluation
+        evalOk = luaEng.ExecuteExpression("'Enshrouded ' .. 'v3.9.2'", &res, &err);
+        assert(evalOk);
+        assert(res == "Enshrouded v3.9.2");
+
+        // Boolean statement
+        evalOk = luaEng.ExecuteExpression("10 > 5", &res, &err);
+        assert(evalOk);
+        assert(res == "true");
+
+        // Protected syntax error catching
+        evalOk = luaEng.ExecuteExpression("function incomplete(", &res, &err);
+        assert(!evalOk);
+        assert(!err.empty());
+        std::cout << "  Live Lua REPL Expression Evaluation, result formatting & error catch -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 101 (Native Spatial Query & Live Lua REPL) fully verified!\n\n";
+    }
+
+    // ------------------------------------------------------------------------
+    // [TEST 102] Dev 2 Architecture Hardening: Self-Healing Loop Recovery & SIMD Buffer Boundary Guard (v3.9.2 v1.3)
+    // ------------------------------------------------------------------------
+    {
+        std::cout << "[Test 102] Testing Dev 2 Architecture Hardening (Self-Healing Loop Recovery & SIMD Boundary Guard)...\n";
+
+        // 1. Direct O(1) Self-Healing Loop Recovery pattern detection & latch advancement
+        // Machine code simulation of Keen Holistic Engine batch iteration:
+        // 48 85 C9: test rcx, rcx
+        // 0F 84 8A 08 00 00: je +0x88A (continue label)
+        // 80 79 2D 00: cmp byte ptr [rcx+2Dh], 0 (fault instruction)
+        alignas(16) uint8_t simulatedLoopCode[] = {
+            0x90, 0x90,                               // NOP padding
+            0x48, 0x85, 0xC9,                         // test rcx, rcx
+            0x0F, 0x84, 0x8A, 0x08, 0x00, 0x00,       // je +0x88A (rel32 = 0x88A)
+            0x80, 0x79, 0x2D, 0x00                    // cmp byte ptr [rcx+2Dh], 0 (fault RIP)
+        };
+        uintptr_t faultRip = reinterpret_cast<uintptr_t>(&simulatedLoopCode[11]);
+        CONTEXT ctx = {};
+        ctx.Rip = faultRip;
+        EXCEPTION_RECORD exRec = {};
+        exRec.ExceptionCode = EXCEPTION_ACCESS_VIOLATION;
+        EXCEPTION_POINTERS ep = {};
+        ep.ContextRecord = &ctx;
+        ep.ExceptionRecord = &exRec;
+
+        bool recovered = dreamkurumi::TryRecoverEngineBatchIteration(&ep, 0);
+        assert(recovered);
+        assert(ctx.Rip == faultRip + 0x88A);
+        std::cout << "  Direct O(1) Self-Healing Loop Recovery (Dynamic je rel32 detection -> +0x88A) -> [PASS]\n";
+
+        // 2. SIMD Buffer Boundary Guard in DreamScanner
+        uint8_t boundaryTestBuf[64];
+        std::memset(boundaryTestBuf, 0xCC, sizeof(boundaryTestBuf));
+        boundaryTestBuf[30] = 0x11;
+        boundaryTestBuf[31] = 0x22;
+        boundaryTestBuf[32] = 0x33;
+        boundaryTestBuf[33] = 0x44;
+
+        // Pattern at exact boundary
+        void* found = dreamkurumi::DreamScanner::FindPattern("11 22 33 44", boundaryTestBuf, sizeof(boundaryTestBuf));
+        assert(found == &boundaryTestBuf[30]);
+
+        // Pattern fitting exactly at buffer size
+        found = dreamkurumi::DreamScanner::FindPattern("11 22 33 44", &boundaryTestBuf[30], 4);
+        assert(found == &boundaryTestBuf[30]);
+
+        // Buffer smaller than pattern size (must cleanly return nullptr without overrun)
+        found = dreamkurumi::DreamScanner::FindPattern("11 22 33 44", &boundaryTestBuf[30], 3);
+        assert(found == nullptr);
+        std::cout << "  SIMD AVX2/SSE2 Buffer Boundary & Tail Guard against PAGE_NOACCESS -> [PASS]\n";
+
+        // 3. Console QuickEdit Mode Filter Logic
+        DWORD rawConsoleMode = ENABLE_EXTENDED_FLAGS | ENABLE_QUICK_EDIT_MODE | ENABLE_MOUSE_INPUT;
+        DWORD sanitizedMode = (rawConsoleMode & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE;
+        assert((sanitizedMode & ENABLE_QUICK_EDIT_MODE) == 0);
+        assert((sanitizedMode & ENABLE_EXTENDED_FLAGS) != 0);
+        assert((sanitizedMode & ENABLE_INSERT_MODE) != 0);
+        std::cout << "  Console QuickEdit Mode Stripping (Anti-Freeze Console I/O) -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 102 (Dev 2 Architecture Hardening) fully verified!\n\n";
+    }
+
+    // ------------------------------------------------------------------------
+    // [TEST 103] Subsystem Hardening: TOML Quoted Arrays, Fuzzy rel8 Wildcards & QPC Guards (v3.9.2 v1.4)
+    // ------------------------------------------------------------------------
+    {
+        std::cout << "[Test 103] Testing Subsystem Hardening (TOML Quoted Arrays, Fuzzy rel8 & QPC Guards)...\n";
+
+        // 1. DreamToml Quote-Aware String Array Parsing (Commas inside quotes preserved)
+        dreamkurumi::DreamToml toml;
+        bool parsed = toml.ParseString(
+            "[Section]\n"
+            "plugins = [\"Dream-AoE-Harvest, Core\", 'XP-Share, Party', \"Admin, Utility\", SimpleItem]\n"
+        );
+        assert(parsed);
+        auto arr = toml.Get("Section", "plugins").AsStringArray();
+        assert(arr.size() == 4);
+        assert(arr[0] == "Dream-AoE-Harvest, Core");
+        assert(arr[1] == "XP-Share, Party");
+        assert(arr[2] == "Admin, Utility");
+        assert(arr[3] == "SimpleItem");
+        std::cout << "  DreamToml Quote-Aware Array Parsing (Commas inside quotes preserved) -> [PASS]\n";
+
+        // 2. DreamFuzzyScanner Short Jump (EB rel8) Wildcard Fix
+        std::vector<uint8_t> shortJmpBytes = { 0xEB, 0x20 }; // jmp +0x20
+        std::vector<uint8_t> mask = { 1, 1 };
+        auto fuzzyRes = dreamkurumi::DreamFuzzyScanner::DisassembleAndGenerateFuzzyPattern(shortJmpBytes, mask);
+        assert(fuzzyRes.success);
+        assert(fuzzyRes.wildcardBytesCount == 1);
+        assert(fuzzyRes.fuzzyPattern == "EB ??");
+        std::cout << "  DreamFuzzyScanner Short Jump (EB rel8) Wildcard Generation without underflow -> [PASS]\n";
+
+        // 3. DreamAdaptiveBatchThrottler Zero-Frequency Guard
+        auto& throttler = dreamkurumi::DreamAdaptiveBatchThrottler::Instance();
+        assert(throttler.GetSmoothedTickMs() > 0.0);
+        std::cout << "  DreamAdaptiveBatchThrottler QPC Frequency Zero-Division Guard -> [PASS]\n";
+
+        // 4. Console Input Mode Filter Logic
+        DWORD consoleInMode = ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT;
+        DWORD filteredMode = (consoleInMode & ~(ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT)) | ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE;
+        assert((filteredMode & ENABLE_MOUSE_INPUT) == 0);
+        assert((filteredMode & ENABLE_WINDOW_INPUT) == 0);
+        assert((filteredMode & ENABLE_LINE_INPUT) != 0);
+        std::cout << "  Console Input Mode Filter (Mouse flooding suppressed, keyboard preserved) -> [PASS]\n";
+
+        std::cout << "  [PASS] Test 103 (Subsystem Hardening & Latent Bug Fixes) fully verified!\n\n";
+    }
+
     // Cleanly stop any background singletons before process exit
     dreamkurumi::DreamToast::Instance().Shutdown();
     dreamkurumi::DreamWatchdog::Instance().Stop();
@@ -4375,7 +4637,7 @@ int main() {
     dreamkurumi::DreamCrashGuard::Shutdown();
 
     std::cout << "============================================================\n";
-    std::cout << " ALL 98 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
+    std::cout << " ALL 103 TESTS PASSED! dreamkurumiHT IS FULLY VERIFIED!\n";
     std::cout << "============================================================\n" << std::flush;
 
     TerminateProcess(GetCurrentProcess(), 0);

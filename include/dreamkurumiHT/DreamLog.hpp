@@ -353,8 +353,8 @@ public:
 
         DWORD inMode = 0;
         if (hIn != INVALID_HANDLE_VALUE && hIn != nullptr && GetConsoleMode(hIn, &inMode)) {
-            // ENABLE_QUICK_EDIT_MODE + ENABLE_EXTENDED_FLAGS allows selecting text with mouse and copying (Ctrl+C / Right-Click / Enter)
-            SetConsoleMode(hIn, inMode | ENABLE_QUICK_EDIT_MODE | ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE);
+            // Disable ENABLE_QUICK_EDIT_MODE so accidental mouse clicks in console do not freeze main thread and logs
+            SetConsoleMode(hIn, (inMode & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE);
         }
 
         if (title) SetConsoleTitleA(title);
@@ -369,7 +369,7 @@ public:
             "\033[95m======================================================================\033[0m\n"
             "\033[96m  dreamkurumiHT Diagnostics Console v" DREAM_FRAMEWORK_VERSION " (Client Mode)\033[0m\n"
             "\033[90m  Monitoring Enshrouded Hooks, LiveGameSettings & Crash Guard...\033[0m\n"
-            "\033[93m  Tip: QuickEdit Enabled (Select & Press Enter to Copy) | F9 Menu\033[0m\n"
+            "\033[93m  Tip: Anti-Freeze Console Mode (QuickEdit Disabled) | F9 Menu\033[0m\n"
             "\033[95m======================================================================\033[0m\n\n";
         DWORD w = 0;
         WriteConsoleA(m_hConsole, banner, (DWORD)(sizeof(banner) - 1), &w, nullptr);

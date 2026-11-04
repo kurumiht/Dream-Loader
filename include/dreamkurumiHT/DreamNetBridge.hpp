@@ -8,6 +8,7 @@
 #include <mutex>
 #include <cstring>
 #include <memory>
+#include <atomic>
 #include "DreamLog.hpp"
 #include "DreamHash.hpp"
 #include "DreamEnv.hpp"
@@ -400,7 +401,7 @@ public:
             DreamCrashGuard::ExecuteSafely("NetBridge:Handler", [&]() {
                 handler(pkt);
             });
-            m_totalPacketsDelivered++;
+            m_totalPacketsDelivered.fetch_add(1, std::memory_order_relaxed);
         } else {
             DREAM_LOG_DEBUG("DreamNetBridge: Unhandled packet on channel 0x%016llX, opcode 0x%04X",
                             static_cast<unsigned long long>(pkt.channelHash), pkt.opcode);
@@ -424,14 +425,14 @@ public:
         return m_localClientId;
     }
 
-    size_t GetTotalPacketsSent() const { return m_totalPacketsSent; }
-    size_t GetTotalPacketsDelivered() const { return m_totalPacketsDelivered; }
+    size_t GetTotalPacketsSent() const { return m_totalPacketsSent.load(std::memory_order_relaxed); }
+    size_t GetTotalPacketsDelivered() const { return m_totalPacketsDelivered.load(std::memory_order_relaxed); }
 
 private:
     DreamNetBridge() = default;
 
     bool DispatchPacket(const NetPacket& pkt) {
-        m_totalPacketsSent++;
+        m_totalPacketsSent.fetch_add(1, std::memory_order_relaxed);
         if (m_loopbackEnabled) {
             // Do not loop back dedicated server broadcasts to the server itself
             if (DreamEnv::IsDedicatedServer() && pkt.senderId == 0 && pkt.targetId == 0xFFFFFFFF) {
@@ -449,8 +450,8 @@ private:
     std::mutex m_mutex;
     bool m_loopbackEnabled{true};
     uint32_t m_localClientId{1}; // Default local player ID
-    size_t m_totalPacketsSent{0};
-    size_t m_totalPacketsDelivered{0};
+    std::atomic<size_t> m_totalPacketsSent{0};
+    std::atomic<size_t> m_totalPacketsDelivered{0};
 };
 
 // ============================================================================

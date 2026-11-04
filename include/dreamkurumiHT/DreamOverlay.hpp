@@ -783,12 +783,14 @@ public:
                 printf("\033[91mUsage: lua <expression or script>\033[0m\n");
                 return;
             }
-            std::string err;
-            bool ok = DreamLua.ExecuteString(args, &err);
+            std::string result, err;
+            bool ok = DreamLua.ExecuteExpression(args, &result, &err);
             if (!ok) {
                 printf("\033[91m[Lua REPL Error] %s\033[0m\n", err.c_str());
+                DreamToast::Instance().Show(err, 3.0f, 0xFF3333);
             } else {
-                printf("\033[92m[Lua REPL] Executed successfully.\033[0m\n");
+                printf("\033[92m=> %s\033[0m\n", result.c_str());
+                DreamToast::Instance().Show(result, 2.5f, 0x00FF88);
             }
         });
 
@@ -1281,6 +1283,12 @@ public:
                 return;
             }
 
+            DWORD inMode = 0;
+            if (GetConsoleMode(hIn, &inMode)) {
+                // Disable mouse/window event flooding while preserving keystrokes and line input
+                SetConsoleMode(hIn, (inMode & ~(ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT)) | ENABLE_EXTENDED_FLAGS | ENABLE_INSERT_MODE);
+            }
+
             printf("\n\033[96mdream\033[0m> ");
             fflush(stdout);
 
@@ -1293,9 +1301,23 @@ public:
                         continue;
                     }
                 } else if (fileType == FILE_TYPE_CHAR) {
-                    DWORD numEvents = 0;
-                    if (!GetNumberOfConsoleInputEvents(hIn, &numEvents) || numEvents == 0) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                    INPUT_RECORD recs[32];
+                    DWORD readCount = 0;
+                    if (!PeekConsoleInputW(hIn, recs, 32, &readCount) || readCount == 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        continue;
+                    }
+                    bool hasEnter = false;
+                    for (DWORD i = 0; i < readCount; ++i) {
+                        if (recs[i].EventType == KEY_EVENT && recs[i].Event.KeyEvent.bKeyDown &&
+                            recs[i].Event.KeyEvent.wVirtualKeyCode == VK_RETURN) {
+                            hasEnter = true;
+                            break;
+                        }
+                    }
+                    if (!hasEnter) {
+                        // User is still typing; preserve accumulated keystrokes in buffer
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
                 }
@@ -1322,8 +1344,17 @@ public:
     }
 
     void StopConsoleInputListener() {
-        if (!m_consoleListenerRunning.load()) return;
-        m_consoleListenerRunning.store(false);
+        if (!m_consoleListenerRunning.exchange(false)) return;
+        HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+        if (hIn && hIn != INVALID_HANDLE_VALUE) {
+            INPUT_RECORD ir{};
+            ir.EventType = KEY_EVENT;
+            ir.Event.KeyEvent.bKeyDown = TRUE;
+            ir.Event.KeyEvent.wVirtualKeyCode = VK_RETURN;
+            ir.Event.KeyEvent.uChar.UnicodeChar = L'\n';
+            DWORD written = 0;
+            WriteConsoleInputW(hIn, &ir, 1, &written);
+        }
         if (m_consoleListenerThread.joinable()) {
             if (m_consoleListenerThread.get_id() != std::this_thread::get_id()) {
                 m_consoleListenerThread.join();

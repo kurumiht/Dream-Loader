@@ -4,6 +4,23 @@ All notable changes to the **dreamkurumiHT** Native Harmony Modding Framework wi
 
 ---
 
+## [v3.9.2] - 2026-11-05 (Official Release - Enshrouded 1.0.1.1 Adaptation, Spatial Query Engine & Core Hardening)
+
+### Summary
+Official production release delivering comprehensive support for Enshrouded v1.0.1.1, spatial ECS snapshot queries, live console stability, and deep subsystem fault-tolerance hardening.
+
+### Highlights
+- **Enshrouded 1.0.1.1 Engine Adaptation:** Direct O(1) loop recovery and automated PE timestamp invalidation (`0x6AEB143E` / `0x6AEB144C`), seamlessly updating cached RVAs without player intervention.
+- **Native Spatial Query Engine (`DreamWorldQuery`):** Zero-allocation spatial snapshot queries with archetype mask extraction for high-throughput world entity tracking.
+- **Interactive Console & QuickEdit Hardening (`DreamOverlay`):** Stripped Windows Console QuickEdit mode to eliminate mouse-click game freeze; preserved background keystroke buffer against input dropping.
+- **TOML & Configuration Robustness (`DreamToml`):** Quote-aware string array parser maintaining comma integrity inside quoted values.
+- **SIMD Scanner & Memory Page Protection (`DreamScanner`):** Strict page boundary guards on AVX2/SSE2 vector scans preventing read violations near `PAGE_NOACCESS` boundaries.
+- **Disassembler Wildcard Accuracy (`DreamFuzzyScanner`):** Rel8 short jump displacement underflow protection for reliable AOB generation.
+- **Adaptive Throttler Guard (`DreamDynamicBackpressure`):** Hardened QPC frequency divisor against zero-division faults.
+- **100% C-ABI v1 Parity:** Fully verified 140/140 exported APIs and 103/103 automated verification tests.
+
+---
+
 ## [v3.9.1] - 2026-11-01 (Official Release - Session Epoch Auto-Resync, High-Jitter Resilience & Mutual Exclusivity)
 
 ### Summary

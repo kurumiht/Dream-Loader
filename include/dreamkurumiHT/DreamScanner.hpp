@@ -23,7 +23,7 @@ class DreamScanner {
 public:
     struct ParsedPattern {
         std::vector<uint8_t> bytes;
-        std::vector<bool>    mask; // true = must match byte, false = wildcard
+        std::vector<uint8_t> mask; // 0xFF = must match byte, 0x00 = wildcard (??)
         size_t firstNonWildcardIndex{0};
         uint8_t firstMatchByte{0};
         bool isValid{false};
@@ -39,11 +39,11 @@ public:
         while (stream >> token) {
             if (token == "?" || token == "??") {
                 p.bytes.push_back(0);
-                p.mask.push_back(false);
+                p.mask.push_back(0x00);
             } else {
                 uint8_t byteVal = static_cast<uint8_t>(std::strtoul(token.c_str(), nullptr, 16));
                 p.bytes.push_back(byteVal);
-                p.mask.push_back(true);
+                p.mask.push_back(0xFF);
                 if (!foundFirst) {
                     p.firstNonWildcardIndex = p.bytes.size() - 1;
                     p.firstMatchByte = byteVal;
@@ -58,7 +58,8 @@ public:
 
     // Verify if candidate address matches the parsed pattern
     static inline bool Matches(const uint8_t* addr, const ParsedPattern& p) {
-        for (size_t i = 0; i < p.bytes.size(); ++i) {
+        const size_t len = p.bytes.size();
+        for (size_t i = 0; i < len; ++i) {
             if (p.mask[i] && addr[i] != p.bytes[i]) {
                 return false;
             }
@@ -75,8 +76,8 @@ public:
         __m256i targetByteVec = _mm256_set1_epi8(static_cast<char>(p.firstMatchByte));
         size_t offset = 0;
 
-        // Process in 32-byte blocks
-        while (offset + 32 <= searchLen) {
+        // Process in 32-byte blocks (guarded against page boundaries)
+        while (offset + 32 <= searchLen && (offset + p.firstNonWildcardIndex + 32) <= size) {
             const uint8_t* curPtr = start + offset + p.firstNonWildcardIndex;
             __m256i chunk = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(curPtr));
             __m256i cmp = _mm256_cmpeq_epi8(chunk, targetByteVec);
@@ -114,8 +115,8 @@ public:
         __m128i targetByteVec = _mm_set1_epi8(static_cast<char>(p.firstMatchByte));
         size_t offset = 0;
 
-        // Process in 16-byte blocks
-        while (offset + 16 <= searchLen) {
+        // Process in 16-byte blocks (guarded against page boundaries)
+        while (offset + 16 <= searchLen && (offset + p.firstNonWildcardIndex + 16) <= size) {
             const uint8_t* curPtr = start + offset + p.firstNonWildcardIndex;
             __m128i chunk = _mm_loadu_si128(reinterpret_cast<const __m128i*>(curPtr));
             __m128i cmp = _mm_cmpeq_epi8(chunk, targetByteVec);
@@ -201,13 +202,15 @@ public:
             if (!hModule) hModule = GetModuleHandleA(nullptr);
             if (hModule) {
                 uint8_t* base = reinterpret_cast<uint8_t*>(hModule);
-                auto dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
-                if (dos->e_magic == IMAGE_DOS_SIGNATURE) {
-                    auto nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
-                    if (nt->Signature == IMAGE_NT_SIGNATURE) {
-                        res = Scan(base, nt->OptionalHeader.SizeOfImage, patternStr);
+                DreamCrashGuard::ExecuteSafely("ScanModuleFallback", [&]() {
+                    auto dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
+                    if (dos->e_magic == IMAGE_DOS_SIGNATURE) {
+                        auto nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
+                        if (nt->Signature == IMAGE_NT_SIGNATURE) {
+                            res = Scan(base, nt->OptionalHeader.SizeOfImage, patternStr);
+                        }
                     }
-                }
+                });
             }
         }
         return res;
@@ -231,10 +234,11 @@ public:
 
         const uint8_t* cur = reinterpret_cast<const uint8_t*>(start);
         size_t remaining = size;
+        static const bool s_hasAvx2 = __builtin_cpu_supports("avx2");
 
         while (remaining >= p.bytes.size() && matches.size() < maxMatches) {
             const uint8_t* found = nullptr;
-            if (__builtin_cpu_supports("avx2")) {
+            if (s_hasAvx2) {
                 found = ScanAVX2(cur, remaining, p);
             } else {
                 found = ScanSSE2(cur, remaining, p);
@@ -292,10 +296,8 @@ public:
         std::vector<std::string> byteTokens;
 
         while (currentOffset < maxLength) {
-            hde64s hs;
-            unsigned int len = hde64_disasm(code + currentOffset, &hs);
-            if (len == 0 || (hs.flags & F_ERROR)) {
-                len = 1;
+            auto decoded = DreamDisasm::Decode(code + currentOffset);
+            if (decoded.length == 0) {
                 char buf[8];
                 snprintf(buf, sizeof(buf), "%02X", code[currentOffset]);
                 byteTokens.push_back(buf);
@@ -303,17 +305,13 @@ public:
                 continue;
             }
 
-            bool isRelative = (hs.flags & F_RELATIVE) != 0;
-            bool isRipRelative = ((hs.flags & F_MODRM) && (hs.modrm_mod == 0) && (hs.modrm_rm == 5));
-            bool isImm64 = (hs.flags & F_IMM64) != 0;
-
-            for (unsigned int b = 0; b < len; ++b) {
+            for (uint8_t b = 0; b < decoded.length; ++b) {
                 bool isWildcard = false;
-                if (isRelative && b >= len - 4) {
+                if (decoded.dispSize > 0 && b >= decoded.dispOffset && b < (decoded.dispOffset + decoded.dispSize)) {
                     isWildcard = true;
-                } else if (isRipRelative && b >= len - 4) {
+                } else if (decoded.isRelativeJump && decoded.immSize > 0 && b >= decoded.immOffset && b < (decoded.immOffset + decoded.immSize)) {
                     isWildcard = true;
-                } else if (isImm64 && b >= len - 8) {
+                } else if (decoded.immSize == 8 && b >= decoded.immOffset && b < (decoded.immOffset + decoded.immSize)) {
                     isWildcard = true;
                 }
 
@@ -326,7 +324,7 @@ public:
                 }
             }
 
-            currentOffset += len;
+            currentOffset += decoded.length;
 
             if (currentOffset >= minLength) {
                 std::ostringstream ss;

@@ -30,7 +30,7 @@ public:
     };
 
     // Converts a strict byte sequence or IDA pattern into a relaxed instruction-aware pattern
-    static FuzzyInstructionResult DisassembleAndGenerateFuzzyPattern(const std::vector<uint8_t>& rawBytes, const std::vector<bool>& mask) {
+    static FuzzyInstructionResult DisassembleAndGenerateFuzzyPattern(const std::vector<uint8_t>& rawBytes, const std::vector<uint8_t>& mask) {
         FuzzyInstructionResult res;
         if (rawBytes.empty()) return res;
 
@@ -94,10 +94,12 @@ public:
                 size_t currentByteIdx = offset + b;
                 bool isWildcard = false;
 
-                // 1. Relative calls / jumps (E8 / E9 / 0F 8X) -> Wildcard displacement
+                // 1. Relative calls / jumps (E8 / E9 / 0F 8X / EB / 7X) -> Wildcard displacement
                 if (hs.flags & F_RELATIVE) {
-                    if (b >= (len - 4)) {
-                        isWildcard = true; // Relative target offset
+                    if (len == 2 && b == 1) {
+                        isWildcard = true; // Short jump rel8 displacement
+                    } else if (len >= 5 && b >= (len - 4)) {
+                        isWildcard = true; // Near jump/call rel32 displacement
                     }
                 }
                 // 2. Stack or base displacement shifts ([rsp+0x20] -> [rsp+0x28])
